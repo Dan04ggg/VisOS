@@ -23,8 +23,8 @@ VisOS wraps all of that in a local UI. No accounts, no uploads, no bill.
 **Prerequisites:** Python 3.10+, Node.js 18+, npm or pnpm
 
 ```bash
-git clone https://github.com/your-org/cv-dataset-manager.git
-cd cv-dataset-manager
+git clone https://github.com/Dan04ggg/VisOS.git
+cd VisOS
 python3 run.py start
 ```
 
