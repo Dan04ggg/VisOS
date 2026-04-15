@@ -38,4 +38,9 @@ venv/bin/pip install -r requirements.txt --quiet --disable-pip-version-check
 
 # Start the server using the venv Python
 echo "Starting FastAPI server on http://localhost:8000"
-exec venv/bin/python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
+exec venv/bin/python -m uvicorn main:app --reload \
+    --reload-exclude "$PWD/venv" \
+    --reload-exclude "$PWD/__pycache__" \
+    --reload-exclude "$PWD/runs" \
+    --reload-exclude "$PWD/workspace" \
+    --host 0.0.0.0 --port 8000

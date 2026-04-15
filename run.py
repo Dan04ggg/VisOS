@@ -384,13 +384,17 @@ def start_backend(python_bin: Path):
     log.flush()
     sys.stdout.write(f"{C}[BACK ]{W} {separator}")
 
+    # Build absolute-path excludes. Uvicorn/watchfiles matches these as path
+    # prefixes, which is reliable on Windows (no backslash/glob issues).
+    excludes: list[str] = []
+    for name in ("venv", "__pycache__", "runs", "workspace"):
+        p = BACKEND_DIR / name
+        excludes += ["--reload-exclude", str(p)]
+
     cmd = [
         str(python_bin), "-m", "uvicorn", "main:app",
         "--reload",
-        # Use relative paths — Python 3.13 pathlib.glob() rejects absolute patterns.
-        # These are relative to cwd=BACKEND_DIR, so they resolve correctly.
-        "--reload-exclude", "venv",
-        "--reload-exclude", "__pycache__",
+        *excludes,
         "--host", "0.0.0.0",
         "--port", "8000",
         "--log-level", "info",
