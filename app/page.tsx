@@ -136,30 +136,24 @@ function DatasetRequiredGuard({
 }
 
 export default function Home() {
-  // Derive initial view from URL path, fallback to 'datasets'
-  const getInitialView = (): ViewType => {
-    if (typeof window === 'undefined') return 'datasets'
-    const segment = window.location.pathname.replace(/^\//, '') as ViewType
-    return VALID_VIEWS.has(segment) ? segment : 'datasets'
-  }
-
-  const [activeView, setActiveViewState] = useState<ViewType>(getInitialView)
+  const [activeView, setActiveViewState] = useState<ViewType>('datasets')
   const [datasets, setDatasets] = useState<Dataset[]>([])
   const [selectedDataset, setSelectedDataset] = useState<Dataset | null>(null)
   const [imageCache, setImageCache] = useState<ImageCache>({})
   const [annotateInitialImageId, setAnnotateInitialImageId] = useState<string | null>(null)
   const [gpuStatus, setGpuStatus] = useState<{ state: string; message: string } | null>(null)
 
-  // Sync activeView when user navigates with browser back/forward buttons
+  // Sync activeView from URL after hydration, and on back/forward navigation
   useEffect(() => {
-    const handlePopState = () => {
+    const syncFromUrl = () => {
       const segment = window.location.pathname.replace(/^\//, '') as ViewType
       if (VALID_VIEWS.has(segment)) {
         setActiveViewState(segment)
       }
     }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
+    syncFromUrl()
+    window.addEventListener('popstate', syncFromUrl)
+    return () => window.removeEventListener('popstate', syncFromUrl)
   }, [])
 
   // Navigate to a view — updates React state AND the browser URL without remounting

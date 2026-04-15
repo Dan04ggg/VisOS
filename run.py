@@ -32,6 +32,7 @@ PID_FILE    = ROOT / ".pids.json"       # tracks { "backend": PID, "frontend": P
 LOG_DIR     = ROOT / ".logs"
 BACK_LOG    = LOG_DIR / "backend.log"
 FRONT_LOG   = LOG_DIR / "frontend.log"
+FIRST_RUN_MARKER = ROOT / ".first_run_complete"
 
 LOG_DIR.mkdir(exist_ok=True)
 
@@ -514,7 +515,10 @@ def cmd_stop(verbose=True):
 
 
 def cmd_start(open_browser_flag=True):
-    head("Starting CV Dataset Manager")
+    head("Starting VisOS")
+    if not FIRST_RUN_MARKER.exists():
+        print(f"  {Y}⚑{W}  {BOLD}First run:{W} packages need to install — this may take a few minutes.")
+        print(f"     Future starts will be much faster.\n")
 
     # If any previously-tracked process is still alive (e.g. terminal was closed
     # while servers kept running in the background), stop them before re-launching.
@@ -540,6 +544,9 @@ def cmd_start(open_browser_flag=True):
     # Deps (each function shows its own spinner + final ok/err line)
     python_bin = ensure_backend_deps()
     ensure_frontend_deps()
+
+    if not FIRST_RUN_MARKER.exists():
+        FIRST_RUN_MARKER.touch()
 
     # Launch
     info("Launching backend…")

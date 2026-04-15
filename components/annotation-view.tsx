@@ -439,7 +439,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
 
-    const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4']
+    const COLORS = ['#00D4B4', '#22c55e', '#ab00ff', '#ab00ff', '#ab00ff', '#00D4B4']
 
     const drawLabel = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string) => {
       ctx.font = 'bold 12px sans-serif'
