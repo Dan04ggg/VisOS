@@ -76,8 +76,17 @@ if __name__ == '__main__':
     # the signature: __call__(self, path: Path) -> bool.  We must match that
     # interface — wrapping the original FileFilter so uvicorn's include/exclude
     # patterns still work, while we bolt on directory-name exclusions.
+    #
+    # Import order matters: importing uvicorn.supervisors.watchfilesreload also
+    # triggers uvicorn/supervisors/__init__.py, which binds:
+    #   ChangeReload = WatchFilesReload   (a direct reference)
+    # uvicorn/main.py then does `from uvicorn.supervisors import ChangeReload`,
+    # capturing that reference by value.  Patching only the module attribute
+    # (_wfr.WatchFilesReload) is therefore not enough — we must also update the
+    # ChangeReload alias in uvicorn.supervisors BEFORE uvicorn.main is imported.
     try:
-        import uvicorn.supervisors.watchfilesreload as _wfr  # type: ignore
+        import uvicorn.supervisors.watchfilesreload as _wfr   # type: ignore
+        import uvicorn.supervisors as _supervisors_pkg         # type: ignore
 
         _OrigReload = _wfr.WatchFilesReload
 
@@ -96,7 +105,9 @@ if __name__ == '__main__':
 
                 self.watch_filter = _WrappedFilter()
 
-        _wfr.WatchFilesReload = _PatchedReload  # type: ignore[attr-defined]
+        # Patch both locations so every reference resolves to _PatchedReload.
+        _wfr.WatchFilesReload = _PatchedReload          # type: ignore[attr-defined]
+        _supervisors_pkg.ChangeReload = _PatchedReload  # type: ignore[attr-defined]
 
     except (ImportError, AttributeError):
         pass  # watchfiles inactive or different uvicorn internal layout
