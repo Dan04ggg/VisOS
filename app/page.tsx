@@ -76,10 +76,12 @@ const VALID_VIEWS = new Set<ViewType>([
   'yaml-wizard', 'settings', 'duplicate-detection',
 ])
 
-// Views that require a dataset to be selected before they're useful
+// Views that require a dataset to be selected before they're useful.
+// Note: 'video-extraction' is intentionally excluded — it creates a new
+// dataset and should be accessible without one already loaded.
 const DATASET_REQUIRED_VIEWS = new Set<ViewType>([
   'dashboard', 'gallery', 'sorting', 'annotate', 'classes',
-  'augmentation', 'video-extraction', 'split', 'health',
+  'augmentation', 'split', 'health',
   'snapshots', 'yaml-wizard', 'duplicate-detection',
 ])
 
@@ -104,7 +106,7 @@ function DatasetRequiredGuard({
         <h2 className="text-base font-semibold text-foreground">No dataset selected</h2>
         <p className="text-sm text-muted-foreground max-w-xs">
           {datasets.length === 0
-            ? 'No datasets are loaded yet. Go to Datasets to load one first.'
+            ? 'No datasets loaded yet. Go to Datasets to upload images, extract video frames, or load a formatted dataset.'
             : 'Pick a dataset below to continue.'}
         </p>
       </div>
@@ -217,6 +219,7 @@ export default function Home() {
             selectedDataset={selectedDataset}
             onSelectDataset={handleSelectDataset}
             onDatasetLoaded={invalidateImageCache}
+            onNavigateToVideo={() => setActiveView('video-extraction')}
             apiUrl={apiUrl}
           />
         )
@@ -327,6 +330,10 @@ export default function Home() {
             selectedDataset={selectedDataset}
             datasets={datasets}
             setDatasets={setDatasets}
+            onDatasetCreated={(dataset) => {
+              setSelectedDataset(dataset)
+              invalidateImageCache(dataset.id)
+            }}
             apiUrl={apiUrl}
           />
         )

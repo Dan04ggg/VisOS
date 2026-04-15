@@ -35,6 +35,7 @@ interface VideoExtractionViewProps {
   selectedDataset: Dataset | null
   datasets: Dataset[]
   setDatasets: (datasets: Dataset[]) => void
+  onDatasetCreated?: (dataset: Dataset) => void
   apiUrl: string
 }
 
@@ -52,11 +53,12 @@ interface VideoFile {
 
 type ExtractionMode = 'interval' | 'uniform' | 'keyframes' | 'manual'
 
-export function VideoExtractionView({ 
-  selectedDataset, 
+export function VideoExtractionView({
+  selectedDataset,
   datasets,
   setDatasets,
-  apiUrl 
+  onDatasetCreated,
+  apiUrl
 }: VideoExtractionViewProps) {
   const [videos, setVideos] = useState<VideoFile[]>([])
   const [selectedVideo, setSelectedVideo] = useState<VideoFile | null>(null)
@@ -255,10 +257,11 @@ export function VideoExtractionView({
         const data = await response.json()
         if (data.new_dataset) {
           setDatasets([...datasets, data.new_dataset])
+          onDatasetCreated?.(data.new_dataset)
         }
-        setMessage({ 
-          type: 'success', 
-          text: `Extracted ${data.extracted_frames || 'frames'} frames to dataset "${data.dataset_name || outputName}"` 
+        setMessage({
+          type: 'success',
+          text: `Extracted ${data.extracted_frames || 'frames'} frames to dataset "${data.dataset_name || outputName}"`
         })
       } else {
         const errorData = await response.json().catch(() => ({ detail: 'Extraction failed' }))

@@ -1,15 +1,15 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { 
-  Upload, 
-  FolderOpen, 
-  Trash2, 
+import {
+  Upload,
+  FolderOpen,
+  Trash2,
   Download,
   Database,
   Image,
@@ -21,7 +21,10 @@ import {
   ChevronRight,
   HardDrive,
   RefreshCw,
-  Loader2
+  Loader2,
+  Video,
+  ImagePlus,
+  Plus
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Dataset } from '@/app/page'
@@ -32,6 +35,7 @@ interface DatasetsViewProps {
   selectedDataset: Dataset | null
   onSelectDataset: (dataset: Dataset) => void
   onDatasetLoaded?: (datasetId: string) => void
+  onNavigateToVideo?: () => void
   apiUrl: string
 }
 
@@ -43,13 +47,14 @@ interface FolderItem {
   format_hint?: string
 }
 
-export function DatasetsView({ 
-  datasets, 
-  setDatasets, 
-  selectedDataset, 
+export function DatasetsView({
+  datasets,
+  setDatasets,
+  selectedDataset,
   onSelectDataset,
   onDatasetLoaded,
-  apiUrl 
+  onNavigateToVideo,
+  apiUrl
 }: DatasetsViewProps) {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
@@ -58,6 +63,8 @@ export function DatasetsView({
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   
+  const imageInputRef = useRef<HTMLInputElement>(null)
+
   // Folder browser state
   const [showFolderBrowser, setShowFolderBrowser] = useState(false)
   const [currentPath, setCurrentPath] = useState('')
@@ -369,76 +376,87 @@ export function DatasetsView({
         </div>
       )}
 
-      {/* Drop Zone */}
-      <div
-        onDragEnter={handleDrag}
-        onDragLeave={handleDrag}
-        onDragOver={handleDrag}
-        onDrop={handleDrop}
-        className={cn(
-          'border-2 border-dashed rounded-xl p-8 mb-6 transition-all',
-          'flex flex-col items-center justify-center text-center',
-          dragActive 
-            ? 'border-primary bg-primary/5' 
-            : 'border-border hover:border-muted-foreground/50 bg-card/50'
-        )}
-      >
-        <div className={cn(
-          'w-14 h-14 rounded-full flex items-center justify-center mb-4',
-          dragActive ? 'bg-primary/10' : 'bg-secondary'
-        )}>
-          {isUploading && uploadStatus === 'processing' ? (
-            <Loader2 className="w-6 h-6 text-amber-500 animate-spin" />
-          ) : (
-            <Upload className={cn('w-6 h-6', dragActive ? 'text-primary' : 'text-muted-foreground')} />
+      {/* Create new dataset — three paths */}
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {/* Path A: upload a formatted ZIP */}
+        <div
+          onDragEnter={handleDrag}
+          onDragLeave={handleDrag}
+          onDragOver={handleDrag}
+          onDrop={handleDrop}
+          className={cn(
+            'sm:col-span-1 border-2 border-dashed rounded-xl p-5 transition-all flex flex-col items-center text-center cursor-pointer',
+            dragActive
+              ? 'border-primary bg-primary/5'
+              : 'border-border hover:border-primary/40 hover:bg-primary/[0.02] bg-card/50'
           )}
-        </div>
-        
-        <h3 className="text-base font-semibold mb-1.5">
-          {isUploading
-            ? uploadStatus === 'processing'
-              ? 'Processing dataset…'
-              : 'Uploading…'
-            : 'Drop your dataset ZIP here'}
-        </h3>
-        <p className="text-xs text-muted-foreground mb-4 max-w-sm leading-relaxed">
-          Supports YOLO, COCO, Pascal VOC, LabelMe, and classification folder formats.
-          <br />Or use <span className="font-medium text-foreground/70">Browse Local Folder</span> to load without uploading.
-        </p>
-        
-        {isUploading ? (
-          <div className="w-full max-w-sm space-y-2">
-            <div className="h-2.5 bg-secondary rounded-full overflow-hidden">
-              <div 
-                className={cn(
-                  "h-full rounded-full transition-all duration-300",
-                  uploadStatus === 'processing' ? 'bg-amber-500' : 
-                  uploadStatus === 'complete' ? 'bg-green-500' : 'bg-primary'
-                )}
-                style={{ 
-                  width: uploadStatus === 'processing' ? '100%' : `${Math.max(2, uploadProgress)}%`,
-                  animation: uploadStatus === 'processing' ? 'pulse 1.5s ease-in-out infinite' : 'none'
-                }}
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">{getProgressLabel()}</p>
+          onClick={() => { if (!isUploading) document.getElementById('zip-input')?.click() }}
+        >
+          <div className={cn('w-10 h-10 rounded-full flex items-center justify-center mb-3', dragActive ? 'bg-primary/10' : 'bg-secondary')}>
+            {isUploading && uploadStatus === 'processing' ? (
+              <Loader2 className="w-5 h-5 text-amber-500 animate-spin" />
+            ) : (
+              <Upload className={cn('w-5 h-5', dragActive ? 'text-primary' : 'text-muted-foreground')} />
+            )}
           </div>
-        ) : (
-          <label className="cursor-pointer">
-            <Input 
-              type="file" 
-              accept=".zip"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
-            <Button asChild variant="secondary">
-              <span>
-                <Upload className="w-4 h-4 mr-2" />
-                Upload ZIP
-              </span>
-            </Button>
-          </label>
-        )}
+          <p className="text-sm font-semibold mb-1">
+            {isUploading ? (uploadStatus === 'processing' ? 'Processing…' : 'Uploading…') : 'Upload Dataset ZIP'}
+          </p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            YOLO, COCO, VOC, LabelMe, classification folder
+          </p>
+          {isUploading && (
+            <div className="w-full mt-3 space-y-1">
+              <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+                <div
+                  className={cn('h-full rounded-full transition-all duration-300',
+                    uploadStatus === 'processing' ? 'bg-amber-500 animate-pulse' :
+                    uploadStatus === 'complete' ? 'bg-green-500' : 'bg-primary'
+                  )}
+                  style={{ width: uploadStatus === 'processing' ? '100%' : `${Math.max(2, uploadProgress)}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-muted-foreground">{getProgressLabel()}</p>
+            </div>
+          )}
+          <input id="zip-input" type="file" accept=".zip" className="hidden" onChange={handleFileSelect} />
+        </div>
+
+        {/* Path B: upload raw unannotated images */}
+        <div
+          className="border-2 border-dashed rounded-xl p-5 transition-all flex flex-col items-center text-center cursor-pointer border-border hover:border-primary/40 hover:bg-primary/[0.02] bg-card/50"
+          onClick={() => imageInputRef.current?.click()}
+        >
+          <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3 bg-secondary">
+            <ImagePlus className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-semibold mb-1">Upload Raw Images</p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Drop unannotated JPG / PNG photos — annotate them on the platform
+          </p>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+        </div>
+
+        {/* Path C: extract frames from video */}
+        <div
+          className="border-2 border-dashed rounded-xl p-5 transition-all flex flex-col items-center text-center cursor-pointer border-border hover:border-primary/40 hover:bg-primary/[0.02] bg-card/50"
+          onClick={onNavigateToVideo}
+        >
+          <div className="w-10 h-10 rounded-full flex items-center justify-center mb-3 bg-secondary">
+            <Video className="w-5 h-5 text-muted-foreground" />
+          </div>
+          <p className="text-sm font-semibold mb-1">Extract from Video</p>
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Upload a video and extract frames to build a new dataset
+          </p>
+        </div>
       </div>
 
       {/* Dataset Grid */}
@@ -450,12 +468,22 @@ export function DatasetsView({
             </div>
             <h3 className="text-base font-semibold">No datasets loaded</h3>
             <p className="text-xs text-muted-foreground mt-1.5 mb-5 max-w-xs leading-relaxed">
-              Use the drop zone above to upload a dataset ZIP, or browse a folder on your computer.
+              Upload a dataset ZIP, drop raw images, extract video frames, or browse a local folder to get started.
             </p>
-            <Button variant="outline" size="sm" onClick={handleOpenFolderBrowser}>
-              <FolderOpen className="w-3.5 h-3.5 mr-1.5" strokeWidth={1.75} />
-              Browse Local Folders
-            </Button>
+            <div className="flex flex-wrap gap-2 justify-center">
+              <Button variant="outline" size="sm" onClick={() => imageInputRef.current?.click()}>
+                <ImagePlus className="w-3.5 h-3.5 mr-1.5" strokeWidth={1.75} />
+                Upload Images
+              </Button>
+              <Button variant="outline" size="sm" onClick={onNavigateToVideo}>
+                <Video className="w-3.5 h-3.5 mr-1.5" strokeWidth={1.75} />
+                From Video
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleOpenFolderBrowser}>
+                <FolderOpen className="w-3.5 h-3.5 mr-1.5" strokeWidth={1.75} />
+                Browse Folder
+              </Button>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-3">

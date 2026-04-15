@@ -384,18 +384,16 @@ def start_backend(python_bin: Path):
     log.flush()
     sys.stdout.write(f"{C}[BACK ]{W} {separator}")
 
-    # Pass relative names as reload-exclude patterns. Uvicorn resolves them
-    # against its cwd (BACKEND_DIR), so bare names work correctly on all
-    # platforms and are compatible with Python 3.14+ pathlib (which no longer
-    # accepts absolute paths in glob patterns).
-    excludes: list[str] = []
-    for name in ("venv", "__pycache__", "runs", "workspace"):
-        excludes += ["--reload-exclude", name]
+    # Use backend/_start.py instead of -m uvicorn.  The shim applies two fixes:
+    #   • pathlib.glob compatibility for Python 3.14+ (no crash on startup)
+    #   • a custom watchfiles filter so venv / __pycache__ / runs / workspace
+    #     never trigger a hot-reload, regardless of uvicorn version
+    # No --reload-exclude flags needed: the filter inside the shim handles it.
+    start_script = BACKEND_DIR / "_start.py"
 
     cmd = [
-        str(python_bin), "-m", "uvicorn", "main:app",
+        str(python_bin), str(start_script), "main:app",
         "--reload",
-        *excludes,
         "--host", "0.0.0.0",
         "--port", "8000",
         "--log-level", "info",
