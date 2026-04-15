@@ -69,38 +69,37 @@ if __name__ == '__main__':
         {"venv", "__pycache__", "runs", "workspace", ".git", "node_modules"}
     )
 
+    # Patch WatchFilesReload before uvicorn instantiates the supervisor so
+    # our directory exclusions are active without any CLI flags.
+    #
+    # The installed uvicorn uses FileFilter (not watchfiles.DefaultFilter) with
+    # the signature: __call__(self, path: Path) -> bool.  We must match that
+    # interface — wrapping the original FileFilter so uvicorn's include/exclude
+    # patterns still work, while we bolt on directory-name exclusions.
     try:
-        from watchfiles import DefaultFilter as _DefaultFilter  # type: ignore
+        import uvicorn.supervisors.watchfilesreload as _wfr  # type: ignore
 
-        class _SourceFilter(_DefaultFilter):
-            """Only pass through changes to source files outside excluded directories."""
+        _OrigReload = _wfr.WatchFilesReload
 
-            def __call__(self, change: object, path: str) -> bool:
-                # Reject if any path component matches an excluded directory name.
-                if any(part in _EXCLUDE_DIR_NAMES for part in Path(path).parts):
-                    return False
-                return super().__call__(change, path)  # type: ignore[arg-type]
+        class _PatchedReload(_OrigReload):  # type: ignore[misc]
+            def __init__(self, config, target, sockets):
+                super().__init__(config, target, sockets)
+                # self.watch_filter is now a FileFilter instance set by super().
+                # Wrap it so excluded directory names are rejected first.
+                _orig_filter = self.watch_filter
 
-        # Patch WatchFilesReload before uvicorn instantiates the supervisor so
-        # our filter is active without any CLI flags.
-        try:
-            import uvicorn.supervisors.watchfilesreload as _wfr  # type: ignore
+                class _WrappedFilter:
+                    def __call__(self_, path: Path) -> bool:  # noqa: N805
+                        if any(part in _EXCLUDE_DIR_NAMES for part in path.parts):
+                            return False
+                        return _orig_filter(path)
 
-            _OrigReload = _wfr.WatchFilesReload
-            _shared_filter = _SourceFilter()
+                self.watch_filter = _WrappedFilter()
 
-            class _PatchedReload(_OrigReload):  # type: ignore[misc]
-                def __init__(self, config, target, sockets):
-                    super().__init__(config, target, sockets)
-                    self.watch_filter = _shared_filter
+        _wfr.WatchFilesReload = _PatchedReload  # type: ignore[attr-defined]
 
-            _wfr.WatchFilesReload = _PatchedReload  # type: ignore[attr-defined]
-
-        except (ImportError, AttributeError):
-            pass  # watchfiles inactive or different uvicorn internal layout
-
-    except ImportError:
-        pass  # watchfiles not installed — uvicorn will use its own fallback poller
+    except (ImportError, AttributeError):
+        pass  # watchfiles inactive or different uvicorn internal layout
 
     from uvicorn.main import main as _uvicorn_main  # noqa: E402
     sys.exit(_uvicorn_main())
