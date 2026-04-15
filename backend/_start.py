@@ -12,12 +12,14 @@ without touching uvicorn's source:
      if the pattern is absolute, just yield the path itself when it exists.
 
   2. Reliable venv / build-directory exclusion from hot-reload
-     Uvicorn resolves --reload-exclude directories into a separate
-     reload_dirs_excludes list, but the watchfiles DefaultFilter it installs only
-     reads from reload_excludes (string patterns).  Directory-based excludes are
-     therefore silently ignored, causing spurious reloads whenever pip writes into
-     the venv.  We monkey-patch WatchFilesReload to install a custom filter that
-     rejects any path whose components include an excluded directory name.
+     Uvicorn's FileFilter (the watch_filter used by WatchFilesReload) compares
+     excluded directories against path.parents.  That comparison only works when
+     both sides are absolute paths — a relative Path('venv') never matches an
+     absolute Path('/backend/venv') even when it is a direct parent.
+
+     The fix: before uvicorn parses sys.argv, we inject ``--reload-exclude``
+     flags with *absolute* paths for each generated directory.  FileFilter then
+     resolves them via p.is_dir() → exclude_dirs, and the parents check works.
 
 IMPORTANT — multiprocessing / Windows note
 ==========================================
@@ -60,57 +62,28 @@ if sys.version_info >= (3, 14):
     pathlib.Path.glob = _glob_compat  # type: ignore[method-assign]
 
 
-# ── 2 & 3. Watchfiles patch + uvicorn entry point — supervisor process only ───
+# ── 2. Inject --reload-exclude flags + uvicorn entry point ───────────────────
 # Everything below starts processes, so it must be guarded by __name__ == '__main__'.
 # Worker processes re-import this file as '__mp_main__' and must NOT re-enter here.
 if __name__ == '__main__':
 
-    _EXCLUDE_DIR_NAMES: frozenset[str] = frozenset(
-        {"venv", "__pycache__", "runs", "workspace", ".git", "node_modules"}
-    )
-
-    # Patch WatchFilesReload before uvicorn instantiates the supervisor so
-    # our directory exclusions are active without any CLI flags.
+    # Inject absolute --reload-exclude paths before uvicorn parses sys.argv.
     #
-    # The installed uvicorn uses FileFilter (not watchfiles.DefaultFilter) with
-    # the signature: __call__(self, path: Path) -> bool.  We must match that
-    # interface — wrapping the original FileFilter so uvicorn's include/exclude
-    # patterns still work, while we bolt on directory-name exclusions.
+    # Why absolute?  FileFilter stores these as Path objects and later checks:
+    #   exclude_dir in path.parents
+    # That comparison only succeeds when both sides are absolute — a relative
+    # Path('venv') never equals Path('C:/backend/venv') in a parents list.
     #
-    # Import order matters: importing uvicorn.supervisors.watchfilesreload also
-    # triggers uvicorn/supervisors/__init__.py, which binds:
-    #   ChangeReload = WatchFilesReload   (a direct reference)
-    # uvicorn/main.py then does `from uvicorn.supervisors import ChangeReload`,
-    # capturing that reference by value.  Patching only the module attribute
-    # (_wfr.WatchFilesReload) is therefore not enough — we must also update the
-    # ChangeReload alias in uvicorn.supervisors BEFORE uvicorn.main is imported.
-    try:
-        import uvicorn.supervisors.watchfilesreload as _wfr   # type: ignore
-        import uvicorn.supervisors as _supervisors_pkg         # type: ignore
-
-        _OrigReload = _wfr.WatchFilesReload
-
-        class _PatchedReload(_OrigReload):  # type: ignore[misc]
-            def __init__(self, config, target, sockets):
-                super().__init__(config, target, sockets)
-                # self.watch_filter is now a FileFilter instance set by super().
-                # Wrap it so excluded directory names are rejected first.
-                _orig_filter = self.watch_filter
-
-                class _WrappedFilter:
-                    def __call__(self_, path: Path) -> bool:  # noqa: N805
-                        if any(part in _EXCLUDE_DIR_NAMES for part in path.parts):
-                            return False
-                        return _orig_filter(path)
-
-                self.watch_filter = _WrappedFilter()
-
-        # Patch both locations so every reference resolves to _PatchedReload.
-        _wfr.WatchFilesReload = _PatchedReload          # type: ignore[attr-defined]
-        _supervisors_pkg.ChangeReload = _PatchedReload  # type: ignore[attr-defined]
-
-    except (ImportError, AttributeError):
-        pass  # watchfiles inactive or different uvicorn internal layout
+    # We only inject dirs that currently exist so they are treated as directory
+    # excludes (p.is_dir() → True → exclude_dirs) rather than glob patterns.
+    # Dirs that don't exist yet (e.g. 'runs' on first launch) are harmless to
+    # skip; they contain no source files to watch anyway.
+    _BACKEND_DIR = Path(__file__).parent.resolve()
+    _EXCLUDE_DIR_NAMES = ("venv", "__pycache__", "runs", "workspace", ".git")
+    for _name in _EXCLUDE_DIR_NAMES:
+        _excl = _BACKEND_DIR / _name
+        if _excl.is_dir():
+            sys.argv.extend(["--reload-exclude", str(_excl)])
 
     from uvicorn.main import main as _uvicorn_main  # noqa: E402
     sys.exit(_uvicorn_main())
