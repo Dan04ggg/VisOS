@@ -192,14 +192,58 @@ def _venv_paths():
     return venv, venv / "bin" / "python", venv / "bin" / "pip"
 
 
+def _find_python() -> str:
+    """Return a working Python 3 executable on the current machine."""
+    import shutil
+    for candidate in ("python3", "python", sys.executable):
+        exe = shutil.which(candidate) or candidate
+        try:
+            out = subprocess.check_output(
+                [exe, "-c", "import sys; print(sys.version_info[0])"],
+                stderr=subprocess.DEVNULL, text=True,
+            ).strip()
+            if out == "3":
+                return exe
+        except Exception:
+            continue
+    return None
+
+
+def _venv_healthy(python_bin: Path) -> bool:
+    """Return True if the venv Python binary exists AND actually runs."""
+    if not python_bin.exists():
+        return False
+    try:
+        result = subprocess.run(
+            [str(python_bin), "-c", "import sys; print(sys.version_info[0])"],
+            capture_output=True, text=True, timeout=10,
+        )
+        return result.returncode == 0 and result.stdout.strip() == "3"
+    except Exception:
+        return False
+
+
 def ensure_backend_deps():
-    """Create venv if missing, then install requirements with a live progress spinner."""
+    """Create venv if missing or broken, then install requirements with a live progress spinner."""
     venv, python_bin, pip_bin = _venv_paths()
 
-    if not venv.exists():
+    if not _venv_healthy(python_bin):
+        if venv.exists():
+            info("Existing virtual environment appears broken or machine-specific — recreating…")
+            import shutil as _shutil
+            _shutil.rmtree(venv, ignore_errors=True)
+
+        system_python = _find_python()
+        if not system_python:
+            err(
+                "Python 3 is not installed or not on PATH.\n"
+                "  Please install Python 3.9+ from https://python.org"
+            )
+            sys.exit(1)
+
         spinner = _Spinner("Creating Python virtual environment…").start()
         result = subprocess.run(
-            [sys.executable, "-m", "venv", str(venv)],
+            [system_python, "-m", "venv", str(venv)],
             capture_output=True,
         )
         spinner.stop()
@@ -339,15 +383,13 @@ def start_backend(python_bin: Path):
     log.flush()
     sys.stdout.write(f"{C}[BACK ]{W} {separator}")
 
-    venv_dir = str(BACKEND_DIR / "venv")
     cmd = [
         str(python_bin), "-m", "uvicorn", "main:app",
         "--reload",
-        # Exclude venv and cache dirs so pip installs don't trigger spurious reloads.
-        # Must be absolute paths — watchfiles DefaultFilter.ignore_paths uses
-        # Path.is_relative_to() which requires absolute prefixes to match correctly.
-        "--reload-exclude", venv_dir,
-        "--reload-exclude", str(BACKEND_DIR / "__pycache__"),
+        # Use relative paths — Python 3.13 pathlib.glob() rejects absolute patterns.
+        # These are relative to cwd=BACKEND_DIR, so they resolve correctly.
+        "--reload-exclude", "venv",
+        "--reload-exclude", "__pycache__",
         "--host", "0.0.0.0",
         "--port", "8000",
         "--log-level", "info",
@@ -474,12 +516,13 @@ def cmd_stop(verbose=True):
 def cmd_start(open_browser_flag=True):
     head("Starting CV Dataset Manager")
 
-    # Fail fast if already running
+    # If any previously-tracked process is still alive (e.g. terminal was closed
+    # while servers kept running in the background), stop them before re-launching.
     pids = read_pids()
     if is_alive(pids.get("backend", 0)) or is_alive(pids.get("frontend", 0)):
-        warn("Servers appear to be running already. Run  python run.py restart  to reload.")
-        cmd_status()
-        return
+        info("Existing server processes detected — stopping them first…")
+        cmd_stop(verbose=False)
+        time.sleep(1)
 
     # Kill any orphaned processes on the ports before launching
     kill_port(8000)
