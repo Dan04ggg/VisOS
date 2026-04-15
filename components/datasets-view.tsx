@@ -501,7 +501,7 @@ export function DatasetsView({
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <CardTitle className="text-sm font-semibold truncate">{dataset.name}</CardTitle>
+                      <CardTitle className="text-sm font-semibold break-words">{dataset.name}</CardTitle>
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                         <span className="inline-flex items-center px-2 py-0.5 bg-secondary rounded-md text-[10px] font-mono font-medium">
                           {getFormatLabel(dataset.format)}

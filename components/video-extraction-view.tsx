@@ -647,6 +647,10 @@ export function VideoExtractionView({
                         <span>Resolution:</span>
                         <span className="font-medium">{selectedVideo.width}×{selectedVideo.height}</span>
                       </div>
+                      <div className="flex items-center justify-between text-sm mt-1">
+                        <span>Video FPS:</span>
+                        <span className="font-medium">{selectedVideo.fps} fps</span>
+                      </div>
                     </div>
                   </div>
                 </CardContent>

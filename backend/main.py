@@ -2673,11 +2673,17 @@ async def extract_video_frames(request: VideoExtractRequest):
     output_path = DATASETS_DIR / dataset_id / "images"
     output_path.mkdir(parents=True, exist_ok=True)
     
+    # Only cap frames for uniform mode; interval/keyframes/manual should extract all matching frames
+    if request.mode == "uniform":
+        effective_max_frames = request.max_frames or request.uniform_count
+    else:
+        effective_max_frames = request.max_frames or None
+
     result = video_extractor.extract_frames(
         video_path,
         output_path,
         nth_frame=nth_frame,
-        max_frames=request.max_frames or request.uniform_count,
+        max_frames=effective_max_frames,
         start_time=request.start_time,
         end_time=request.end_time
     )
