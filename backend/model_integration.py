@@ -11,11 +11,26 @@ Model Integration - Load and use external models for auto-annotation
 
 import os
 import json
+import ssl
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 import uuid
 from PIL import Image
 import yaml
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """Return an SSL context that validates certificates correctly on macOS.
+
+    On macOS, Python installed from python.org ships without the system CA
+    bundle wired in.  certifi provides a bundled CA store that works
+    everywhere; we fall back to the default context if certifi is absent.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        return ssl.create_default_context()
 
 
 class ModelManager:
@@ -240,8 +255,9 @@ class ModelManager:
         self.loaded_models[model_id] = model_info
         return model_id
     
-    def load_pretrained(self, model_type: str, model_name: str, hf_token: Optional[str] = None) -> str:
-        """Load a pretrained model"""
+    def load_pretrained(self, model_type: str, model_name: str, hf_token: Optional[str] = None,
+                        _status_hook=None) -> str:
+        """Load a pretrained model. _status_hook(phase: str) is called at key loading phases."""
         model_id = model_name
         model_info = {
             "id": model_id,
@@ -254,9 +270,10 @@ class ModelManager:
         }
         try:
             if model_type in ("yolo", "rtdetr"):
-                model_info = self._load_pretrained_yolo(model_name, model_info)
+                model_info = self._load_pretrained_yolo(model_name, model_info, _status_hook=_status_hook)
             elif model_type in ["sam", "sam2", "sam3"]:
-                model_info = self._load_pretrained_sam(model_name, model_info, hf_token=hf_token)
+                model_info = self._load_pretrained_sam(model_name, model_info, hf_token=hf_token,
+                                                       _status_hook=_status_hook)
             elif model_type == "rfdetr":
                 model_info = self._load_pretrained_rfdetr(model_name, model_info)
             elif model_type == "yoloworld":
@@ -360,7 +377,7 @@ class ModelManager:
         "groundingdino_b": "IDEA-Research/grounding-dino-base",
     }
 
-    def _load_pretrained_yolo(self, model_name: str, model_info: Dict) -> Dict:
+    def _load_pretrained_yolo(self, model_name: str, model_info: Dict, _status_hook=None) -> Dict:
         """Load pretrained YOLO model — downloads directly to workspace/models/."""
         import sys
         import subprocess
@@ -391,7 +408,7 @@ class ModelManager:
                     download_url,
                     headers={"User-Agent": "Mozilla/5.0"}
                 )
-                with urllib.request.urlopen(req, timeout=300) as resp, \
+                with urllib.request.urlopen(req, timeout=300, context=_ssl_context()) as resp, \
                         open(local_model_path, "wb") as f:
                     while True:
                         chunk = resp.read(1 << 16)  # 64 KB
@@ -405,6 +422,10 @@ class ModelManager:
                 model_info["error"] = f"Download failed: {dl_err}"
                 model_info["loaded"] = False
                 return model_info
+
+        # File is on disk — now load into memory
+        if _status_hook:
+            _status_hook("loading_memory")
 
         # Try to load with ultralytics (optional — gives class names)
         try:
@@ -482,7 +503,8 @@ class ModelManager:
         "sam3": ("facebook/sam3", "sam3.pt"),
     }
 
-    def _load_pretrained_sam(self, model_name: str, model_info: Dict, hf_token: Optional[str] = None) -> Dict:
+    def _load_pretrained_sam(self, model_name: str, model_info: Dict, hf_token: Optional[str] = None,
+                             _status_hook=None) -> Dict:
         """Download SAM/SAM2/SAM3 checkpoint to workspace/models/, then load via ultralytics."""
         import urllib.request
 
@@ -553,7 +575,7 @@ class ModelManager:
                         download_url,
                         headers={"User-Agent": "Mozilla/5.0"}
                     )
-                    with urllib.request.urlopen(req, timeout=600) as resp, \
+                    with urllib.request.urlopen(req, timeout=600, context=_ssl_context()) as resp, \
                             open(local_model_path, "wb") as f:
                         while True:
                             chunk = resp.read(1 << 16)  # 64 KB
@@ -569,6 +591,10 @@ class ModelManager:
 
         model_info["path"] = str(local_model_path)
         model_info["loaded"] = True
+
+        # File is on disk — now load into memory (can be slow for large SAM models)
+        if _status_hook:
+            _status_hook("loading_memory")
 
         # Try ultralytics SAM first (no extra packages needed)
         if self._try_load_sam_ultralytics(str(local_model_path), model_info):
@@ -622,7 +648,7 @@ class ModelManager:
         if not local_path.exists():
             try:
                 req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=300) as resp, open(local_path, "wb") as f:
+                with urllib.request.urlopen(req, timeout=300, context=_ssl_context()) as resp, open(local_path, "wb") as f:
                     while True:
                         chunk = resp.read(1 << 16)
                         if not chunk:

@@ -55,7 +55,7 @@ dataset_parser = DatasetParser()
 format_converter = FormatConverter()
 annotation_manager = AnnotationManager()
 model_manager = ModelManager(MODELS_DIR)
-training_manager = TrainingManager()
+training_manager = TrainingManager(jobs_file=WORKSPACE_DIR / "training_jobs.json")
 dataset_merger = DatasetMerger()
 video_extractor = VideoFrameExtractor()
 duplicate_detector = DuplicateDetector()
@@ -1397,12 +1397,22 @@ async def start_model_download(
     if _download_status.get(pretrained, {}).get("status") == "downloading":
         return {"success": True, "already_started": True}
 
-    _download_status[pretrained] = {"status": "downloading", "progress": 5}
+    _download_status[pretrained] = {"status": "downloading", "progress": 5, "phase": "downloading",
+                                     "message": f"Downloading {pretrained}…"}
 
     def _do_download(mtype: str, mname: str, token: Optional[str]):
         try:
+            def _phase_hook(phase: str):
+                if phase == "loading_memory":
+                    _download_status[mname] = {
+                        "status": "downloading",
+                        "progress": 80,
+                        "phase": "loading_memory",
+                        "message": "Loading model into memory… this may take a moment",
+                    }
+
             _download_status[mname]["progress"] = 15
-            model_manager.load_pretrained(mtype, mname, hf_token=token)
+            model_manager.load_pretrained(mtype, mname, hf_token=token, _status_hook=_phase_hook)
             info = model_manager.loaded_models.get(mname, {})
             if info.get("error") and not info.get("path"):
                 _download_status[mname] = {"status": "error", "progress": 0, "error": info["error"]}
@@ -2368,6 +2378,12 @@ async def start_training(config: TrainingConfig, background_tasks: BackgroundTas
     )
     
     return {"success": True, "training_id": training_id}
+
+
+@app.get("/api/train/jobs")
+async def list_training_jobs():
+    """List all training jobs (summary). Used by the frontend to restore state after navigation."""
+    return {"jobs": training_manager.list_training_jobs()}
 
 
 @app.get("/api/train/{training_id}/status")

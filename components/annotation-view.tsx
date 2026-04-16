@@ -94,8 +94,13 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   // Local copy of dataset classes so we can add to it without mutating the prop
   const [localClasses, setLocalClasses] = useState<string[]>(selectedDataset?.classes || [])
 
-  // SAM state
-  const [isSamLoading, setIsSamLoading] = useState(false)
+  // SAM click queue state
+  type SamClick = { id: string; nx: number; ny: number; status: 'pending' | 'processing' }
+  const [samPendingClicks, setSamPendingClicks] = useState<SamClick[]>([])
+  const samPendingClicksRef = useRef<SamClick[]>([])
+  const samProcessingRef = useRef(false)
+  const selectedModelRef = useRef('')
+  const confidenceRef = useRef(0.5)
 
   // Keypoint state
   const [keypointList, setKeypointList] = useState<{ x: number; y: number; label: string }[]>([])
@@ -139,6 +144,9 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   useEffect(() => { currentImageRef.current = currentImage }, [currentImage])
   useEffect(() => { selectedDatasetRef.current = selectedDataset }, [selectedDataset])
   useEffect(() => { annotationsRef.current = annotations }, [annotations])
+  useEffect(() => { samPendingClicksRef.current = samPendingClicks }, [samPendingClicks])
+  useEffect(() => { selectedModelRef.current = selectedModel }, [selectedModel])
+  useEffect(() => { confidenceRef.current = confidence }, [confidence])
   // Sync localClasses when dataset changes
   useEffect(() => { setLocalClasses(selectedDataset?.classes || []) }, [selectedDataset?.id])
 
@@ -146,6 +154,85 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   useEffect(() => {
     return () => { Object.values(pollIntervalsRef.current).forEach(clearInterval) }
   }, [])
+
+  // ── SAM queue: redraw canvas when pending clicks change ───────────────────────
+  useEffect(() => {
+    if (imageRef.current) {
+      // drawCanvasWithData reads samPendingClicksRef directly, so just trigger a redraw
+      const img = imageRef.current
+      drawCanvasWithData(img, annotations, selectedAnnotation, tempBox, polygonPoints, zoom, keypointList)
+    }
+  }, [samPendingClicks]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── SAM queue: process clicks one at a time ───────────────────────────────────
+  useEffect(() => {
+    if (samPendingClicks.length === 0 || samProcessingRef.current) return
+    const processNext = async () => {
+      const queue = samPendingClicksRef.current
+      if (queue.length === 0 || samProcessingRef.current) return
+      samProcessingRef.current = true
+      const click = queue[0]
+      // Mark as processing (yellow dot)
+      const updated = samPendingClicksRef.current.map(c =>
+        c.id === click.id ? { ...c, status: 'processing' as const } : c
+      )
+      samPendingClicksRef.current = updated
+      setSamPendingClicks(updated)
+
+      const modelId = selectedModelRef.current
+      const conf = confidenceRef.current
+      const ds = selectedDatasetRef.current
+      const img = currentImageRef.current
+      if (modelId && ds && img) {
+        try {
+          const params = new URLSearchParams({
+            model_id: modelId,
+            confidence_threshold: String(conf),
+            point_x: String(click.nx),
+            point_y: String(click.ny),
+          })
+          if (img.path) params.set('image_path_hint', img.path)
+          const resp = await fetch(
+            `${apiUrl}/api/auto-annotate/${ds.id}/single/${img.id}?${params}`,
+            { method: 'POST' }
+          )
+          if (resp.ok) {
+            const data = await resp.json()
+            if (data.annotations?.length) {
+              const next = [...annotationsRef.current, ...data.annotations]
+              setAnnotations(next)
+              saveToHistory(next)
+              await saveAnnotations(false, next)
+            } else {
+              // Fallback: standard auto-annotate (no point)
+              const fbParams = new URLSearchParams({ model_id: modelId, confidence_threshold: String(conf) })
+              if (img.path) fbParams.set('image_path_hint', img.path)
+              const fbResp = await fetch(
+                `${apiUrl}/api/auto-annotate/${ds.id}/single/${img.id}?${fbParams}`,
+                { method: 'POST' }
+              )
+              if (fbResp.ok) {
+                const fbData = await fbResp.json()
+                if (fbData.annotations?.length) {
+                  const next = [...annotationsRef.current, ...fbData.annotations]
+                  setAnnotations(next)
+                  saveToHistory(next)
+                  await saveAnnotations(false, next)
+                }
+              }
+            }
+          }
+        } catch { /* silently skip failed individual clicks */ }
+      }
+
+      // Remove processed click
+      const remaining = samPendingClicksRef.current.filter(c => c.id !== click.id)
+      samPendingClicksRef.current = remaining
+      setSamPendingClicks(remaining)
+      samProcessingRef.current = false
+    }
+    processNext()
+  }, [samPendingClicks]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Persist batch jobs to localStorage ───────────────────────────────────────
   useEffect(() => {
@@ -321,7 +408,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
 
   const downloadModel = async (model: { id: string; name: string; type: string }) => {
     setDownloadingModelId(model.id)
-    toast.info(`Downloading ${model.name}… this may take a minute`, { duration: 60000, id: `dl-${model.id}` })
+    toast.info(`Downloading ${model.name}… this may take a minute`, { duration: 120000, id: `dl-${model.id}` })
     try {
       const fd = new FormData()
       fd.append('model_type', model.type)
@@ -335,6 +422,9 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
             const s = await fetch(`${apiUrl}/api/models/download-status/${model.id}`)
             if (!s.ok) return
             const status = await s.json()
+            if (status.phase === 'loading_memory') {
+              toast.info(`Loading ${model.name} into memory… please wait`, { duration: 120000, id: `dl-${model.id}` })
+            }
             if (status.status === 'done') { clearInterval(poll); resolve() }
             else if (status.status === 'error') { clearInterval(poll); reject(new Error(status.error ?? 'Download failed')) }
           } catch {}
@@ -441,6 +531,13 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
 
     const COLORS = ['#00D4B4', '#22c55e', '#ab00ff', '#ab00ff', '#ab00ff', '#00D4B4']
 
+    const hexToRgba = (hex: string, alpha: number) => {
+      const r = parseInt(hex.slice(1, 3), 16)
+      const g = parseInt(hex.slice(3, 5), 16)
+      const b = parseInt(hex.slice(5, 7), 16)
+      return `rgba(${r},${g},${b},${alpha})`
+    }
+
     const drawLabel = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, color: string) => {
       ctx.font = 'bold 12px sans-serif'
       const tw = ctx.measureText(text).width + 10
@@ -455,7 +552,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
       const color = isSel ? '#22c55e' : COLORS[(ann.class_id || 0) % COLORS.length]
       ctx.strokeStyle = color
       ctx.lineWidth = isSel ? 3 : 2
-      ctx.fillStyle = color + (isSel ? '40' : '20')
+      ctx.fillStyle = hexToRgba(color, isSel ? 0.25 : 0.125)
 
       if (ann.bbox && ann.bbox.length === 4) {
         const [x, y, w, h] = ann.bbox
@@ -540,6 +637,38 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
         ctx.fillText(kp.label || String(i + 1), px + 8, py - 4)
       })
     }
+
+    // Draw SAM pending click markers
+    const samClicks = samPendingClicksRef.current
+    samClicks.forEach(click => {
+      const cx = click.nx * img.width * scale
+      const cy = click.ny * img.height * scale
+      const isProcessing = click.status === 'processing'
+      const color = isProcessing ? '#f59e0b' : '#ef4444'
+      // Crosshair lines
+      ctx.strokeStyle = color
+      ctx.lineWidth = 1.5
+      ctx.setLineDash([])
+      ctx.beginPath()
+      ctx.moveTo(cx - 18, cy); ctx.lineTo(cx + 18, cy)
+      ctx.moveTo(cx, cy - 18); ctx.lineTo(cx, cy + 18)
+      ctx.stroke()
+      // Outer ring
+      ctx.beginPath()
+      ctx.arc(cx, cy, 11, 0, Math.PI * 2)
+      ctx.strokeStyle = color
+      ctx.lineWidth = 2
+      ctx.stroke()
+      // Inner fill dot
+      ctx.beginPath()
+      ctx.arc(cx, cy, 5, 0, Math.PI * 2)
+      ctx.fillStyle = color
+      ctx.fill()
+      // Status label
+      ctx.font = 'bold 10px sans-serif'
+      ctx.fillStyle = color
+      ctx.fillText(isProcessing ? '…' : '+', cx + 13, cy - 6)
+    })
   }, [zoom])
 
   const drawCanvas = useCallback(() => {
@@ -582,7 +711,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
       // Redraw with keypoints shown
       if (imageRef.current) drawCanvasWithData(imageRef.current, annotations, selectedAnnotation, tempBox, polygonPoints, zoom, newKps)
     } else if (activeTool === 'sam') {
-      handleSamClick(coords)
+      enqueueSamClick(coords)
     } else {
       // In select mode: if clicking on already-selected bbox, start drag
       if (activeTool === 'select' && selectedAnnotation !== null) {
@@ -685,62 +814,21 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     setIsDrawing(false); setDrawStart(null); setTempBox(null)
   }
 
-  const handleSamClick = async (coords: { x: number; y: number }) => {
+  const enqueueSamClick = (coords: { x: number; y: number }) => {
     if (!selectedDataset || !currentImage || !selectedModel) {
       toast.error('Select a SAM-compatible model first')
       return
     }
-    setIsSamLoading(true)
     const scale = scaleRef.current
     const img = imageRef.current
-    if (!img) { setIsSamLoading(false); return }
-    // Normalize coordinates
-    const px = coords.x / scale / img.width
-    const py = coords.y / scale / img.height
-    try {
-      const params = new URLSearchParams({
-        model_id: selectedModel,
-        confidence_threshold: String(confidence),
-        point_x: String(px),
-        point_y: String(py),
-      })
-      if (currentImage.path) params.set('image_path_hint', currentImage.path)
-      const resp = await fetch(
-        `${apiUrl}/api/auto-annotate/${selectedDataset.id}/single/${currentImage.id}?${params}`,
-        { method: 'POST' }
-      )
-      if (!resp.ok) throw new Error('SAM failed')
-      const data = await resp.json()
-      if (data.annotations?.length) {
-        const next = [...annotationsRef.current, ...data.annotations]
-        setAnnotations(next)
-        saveToHistory(next)
-        await saveAnnotations(false, next)
-        toast.success(`SAM generated ${data.annotations.length} mask(s)`)
-      } else {
-        // Fallback: just run standard auto-annotate
-        const fbParams = new URLSearchParams({ model_id: selectedModel, confidence_threshold: String(confidence) })
-        if (currentImage.path) fbParams.set('image_path_hint', currentImage.path)
-        const fallbackResp = await fetch(
-          `${apiUrl}/api/auto-annotate/${selectedDataset.id}/single/${currentImage.id}?${fbParams}`,
-          { method: 'POST' }
-        )
-        const fallbackData = await fallbackResp.json()
-        if (fallbackData.annotations?.length) {
-          const next = [...annotationsRef.current, ...fallbackData.annotations]
-          setAnnotations(next)
-          saveToHistory(next)
-          await saveAnnotations(false, next)
-          toast.success('Auto-annotated (SAM point not supported by this model)')
-        } else {
-          toast.info('No objects detected at that point')
-        }
-      }
-    } catch {
-      toast.error('SAM annotation failed')
-    } finally {
-      setIsSamLoading(false)
-    }
+    if (!img) return
+    const nx = coords.x / scale / img.width
+    const ny = coords.y / scale / img.height
+    const id = Math.random().toString(36).slice(2)
+    const newClick = { id, nx, ny, status: 'pending' as const }
+    const updated = [...samPendingClicksRef.current, newClick]
+    samPendingClicksRef.current = updated
+    setSamPendingClicks(updated)
   }
 
   const commitKeypoints = () => {
@@ -912,6 +1000,13 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     if (!name || !selectedDataset) return
     setAddingClass(false)
     setNewClassName('')
+    // Optimistic update — show the class immediately without waiting for the slow backend parse
+    if (!localClasses.includes(name)) {
+      setLocalClasses(prev => [...prev, name])
+      setAvailableClasses(prev => [...prev, name])
+    }
+    setActiveClass(name)
+    toast.success(`Class "${name}" added`)
     try {
       const resp = await fetch(
         `${apiUrl}/api/datasets/${selectedDataset.id}/add-classes`,
@@ -920,13 +1015,16 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
       )
       if (!resp.ok) throw new Error('Failed to add class')
       const data = await resp.json()
-      const updatedClasses: string[] = data.updated_dataset?.classes || [...localClasses, name]
-      setLocalClasses(updatedClasses)
-      setAvailableClasses(updatedClasses)
-      setActiveClass(name)
-      toast.success(`Class "${name}" added`)
+      const updatedClasses: string[] = data.updated_dataset?.classes || []
+      if (updatedClasses.length > 0) {
+        setLocalClasses(updatedClasses)
+        setAvailableClasses(updatedClasses)
+      }
     } catch {
-      toast.error('Failed to add class')
+      // Revert optimistic update on failure
+      setLocalClasses(prev => prev.filter(c => c !== name))
+      setAvailableClasses(prev => prev.filter(c => c !== name))
+      toast.error('Failed to save class to backend')
     }
   }
 
@@ -1259,7 +1357,8 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
             </Button>
             <Button size="sm" variant={activeTool === 'sam' ? 'default' : 'outline'}
               onClick={() => setActiveTool('sam')} title="SAM click-to-segment (Q)">
-              {isSamLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+              {samPendingClicks.some(c => c.status === 'processing') ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+              {samPendingClicks.length > 0 && <span className="ml-1 text-xs">{samPendingClicks.length}</span>}
             </Button>
           </div>
 
@@ -1439,8 +1538,9 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
         {/* ── Annotation canvas view ──────────────────────────────────────── */}
         <>
 
-        {/* Canvas */}
-        <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30 flex items-center justify-center p-4 relative">
+        {/* Canvas — outer div is the scroll container; inner div centers content when smaller than viewport */}
+        <div ref={containerRef} className="flex-1 overflow-auto bg-muted/30 relative">
+          <div className="min-h-full flex items-center justify-center p-4">
           {isImageLoading ? (
             <div className="flex flex-col items-center gap-3">
               <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -1486,8 +1586,8 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
               )}
               {activeTool === 'sam' && (
                 <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-green-500/90 text-white text-xs px-3 py-1.5 rounded-full font-medium shadow pointer-events-none">
-                  SAM mode — click a point on an object to auto-segment it
-                  {isSamLoading && ' (processing...)'}
+                  SAM mode — click objects to segment
+                  {samPendingClicks.length > 0 && ` · ${samPendingClicks.length} in queue`}
                 </div>
               )}
               {keypointList.length > 0 && activeTool === 'keypoint' && (
@@ -1512,6 +1612,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
               )}
             </div>
           )}
+          </div>{/* end inner centering wrapper */}
         </div>
 
         {/* Bottom bar */}

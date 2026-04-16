@@ -74,7 +74,7 @@ interface LogEntry {
 /** Shape returned by GET /api/train/:id/status */
 interface TrainingStatus {
   id: string
-  status: "starting" | "running" | "completed" | "failed" | "stopped" | "paused"
+  status: "starting" | "running" | "completed" | "failed" | "stopped" | "paused" | "interrupted"
   progress: number
   current_epoch: number
   total_epochs: number
@@ -359,6 +359,77 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   }, [isTraining, apiUrl])
 
   // -------------------------------------------------------------------------
+  // Persist trainingId to localStorage so it survives page refreshes
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (trainingId) localStorage.setItem('cvdm_training_id', trainingId)
+    else localStorage.removeItem('cvdm_training_id')
+  }, [trainingId])
+
+  // -------------------------------------------------------------------------
+  // On mount: restore any active/paused/interrupted training job from backend
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    const restore = async () => {
+      try {
+        // 1. List all known jobs from backend
+        const res = await fetch(`${apiUrl}/api/train/jobs`)
+        if (!res.ok) return
+        const data = await res.json()
+        const jobs: Array<{
+          id: string; status: string; progress: number;
+          current_epoch: number; total_epochs: number;
+          model_path: string | null; error?: string
+        }> = data.jobs || []
+
+        // Find the most recently started job that needs attention
+        const active = jobs.find(j =>
+          j.status === 'running' || j.status === 'starting' || j.status === 'paused'
+        )
+        if (active) {
+          setTrainingId(active.id)
+          setIsTraining(active.status === 'running' || active.status === 'starting')
+          setIsPaused(active.status === 'paused')
+          setProgress(active.progress ?? 0)
+          setCurrentEpoch(active.current_epoch ?? 0)
+          setTotalEpochs(active.total_epochs ?? 100)
+          setStatusLabel(active.status === 'paused' ? 'Paused' : 'Running')
+          addLog(`Restored training job (id: ${active.id}) — still ${active.status}`, 'info')
+          return
+        }
+
+        // 2. Also check for an interrupted job (backend restart while training)
+        const interrupted = jobs.find(j => j.status === 'interrupted')
+        if (interrupted) {
+          setTrainingId(interrupted.id)
+          setIsTraining(false)
+          setProgress(interrupted.progress ?? 0)
+          setStatusLabel('Interrupted')
+          if (interrupted.model_path) setModelPath(interrupted.model_path)
+          addLog(`Previous training (id: ${interrupted.id}) was interrupted by a backend restart.`, 'warning')
+          return
+        }
+
+        // 3. Fallback: localStorage for a completed/failed job the user might want to see
+        const savedId = localStorage.getItem('cvdm_training_id')
+        if (savedId && !jobs.find(j => j.id === savedId)) return  // not in backend anymore
+        if (savedId) {
+          const completed = jobs.find(j => j.id === savedId)
+          if (completed && (completed.status === 'completed' || completed.status === 'failed' || completed.status === 'stopped')) {
+            setTrainingId(savedId)
+            setIsTraining(false)
+            setProgress(completed.progress ?? 0)
+            setStatusLabel(completed.status.charAt(0).toUpperCase() + completed.status.slice(1))
+            if (completed.model_path) setModelPath(completed.model_path)
+            if (completed.error) setError(completed.error)
+          }
+        }
+      } catch { /* backend not reachable yet */ }
+    }
+    restore()
+  }, [apiUrl]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // -------------------------------------------------------------------------
   // Polling — starts whenever trainingId is set, pauses if isPaused
   // -------------------------------------------------------------------------
 
@@ -431,6 +502,13 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           if (data.model_path) setModelPath(data.model_path)
           addLog("Training paused — checkpoint saved. Click Resume to continue.", "info")
           setStatusLabel("Paused")
+          setGpuUsage(0); setMemoryUsage(0)
+          stopPolling()
+        } else if (data.status === "interrupted") {
+          failedPollCount.current = 0
+          setIsTraining(false)
+          if (data.model_path) setModelPath(data.model_path)
+          setStatusLabel("Interrupted")
           setGpuUsage(0); setMemoryUsage(0)
           stopPolling()
         } else {

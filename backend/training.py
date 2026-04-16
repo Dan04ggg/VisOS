@@ -261,9 +261,56 @@ def _make_callbacks(job: Dict) -> Dict:
 class TrainingManager:
     """Manage local model training"""
 
-    def __init__(self):
+    def __init__(self, jobs_file: Optional[Path] = None):
         self.training_jobs:    Dict[str, Dict[str, Any]] = {}
         self.training_threads: Dict[str, threading.Thread] = {}
+        self.jobs_file = jobs_file
+        if self.jobs_file:
+            self._restore_jobs()
+
+    # ── Persistence ───────────────────────────────────────────────────────────
+
+    # Fields that cannot be serialised to JSON (live objects / internal flags)
+    _SKIP_KEYS = {"model", "_trainer", "_stop_requested"}
+
+    def _persist_jobs(self) -> None:
+        """Write serialisable job metadata to disk so the frontend can restore it."""
+        if not self.jobs_file:
+            return
+        try:
+            import json as _json
+            snapshot = {}
+            for job_id, job in self.training_jobs.items():
+                snapshot[job_id] = {
+                    k: v for k, v in job.items()
+                    if k not in self._SKIP_KEYS and not callable(v)
+                }
+            self.jobs_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.jobs_file, "w") as f:
+                _json.dump(snapshot, f, indent=2, default=str)
+        except Exception as exc:
+            print(f"[training] Could not persist jobs: {exc}")
+
+    def _restore_jobs(self) -> None:
+        """Restore job metadata from disk on startup.
+        Jobs that were 'running' or 'starting' are marked as 'interrupted'
+        because their training thread died with the previous process."""
+        if not self.jobs_file or not self.jobs_file.exists():
+            return
+        try:
+            import json as _json
+            with open(self.jobs_file) as f:
+                saved: Dict[str, Any] = _json.load(f)
+            for job_id, job in saved.items():
+                if job.get("status") in ("running", "starting"):
+                    job["status"] = "interrupted"
+                    logs = list(job.get("logs", []))
+                    logs.append("⚠ Training was interrupted — the backend process was restarted.")
+                    job["logs"] = logs
+                self.training_jobs[job_id] = job
+            print(f"[training] Restored {len(saved)} training job(s) from disk.")
+        except Exception as exc:
+            print(f"[training] Could not restore jobs: {exc}")
 
     def start_training(
         self,
@@ -294,6 +341,7 @@ class TrainingManager:
         }
 
         self.training_jobs[training_id] = job
+        self._persist_jobs()  # record job creation immediately
 
         thread = threading.Thread(target=self._run_training, args=(training_id,), daemon=True)
         thread.start()
@@ -327,6 +375,8 @@ class TrainingManager:
             # Log only the last part of traceback to keep logs readable
             short_tb = "\n".join(tb.strip().splitlines()[-8:])
             job["logs"].append(short_tb)
+        finally:
+            self._persist_jobs()  # always persist final status
 
     # ── RF-DETR ───────────────────────────────────────────────────────────────
 
@@ -930,18 +980,18 @@ class TrainingManager:
             return None
         job = self.training_jobs[training_id]
         return {
-            "id":            job["id"],
-            "status":        job["status"],
-            "progress":      job["progress"],
-            "current_epoch": job["current_epoch"],
-            "total_epochs":  job["total_epochs"],
-            "metrics":       job["metrics"],
+            "id":            job.get("id", training_id),
+            "status":        job.get("status", "unknown"),
+            "progress":      job.get("progress", 0),
+            "current_epoch": job.get("current_epoch", 0),
+            "total_epochs":  job.get("total_epochs", 0),
+            "metrics":       job.get("metrics", {}),
             "epoch_history": job.get("epoch_history", []),
-            "started_at":    job["started_at"],
-            "model_path":    job["model_path"],
+            "started_at":    job.get("started_at", ""),
+            "model_path":    job.get("model_path"),
             "device_info":   job.get("device_info"),
             "gpu_mem_gb":    job.get("gpu_mem_gb"),
-            "logs":          job["logs"][-50:],
+            "logs":          job.get("logs", [])[-50:],
             "error":         job.get("error"),
         }
 
@@ -959,6 +1009,7 @@ class TrainingManager:
                 trainer.stop = True
             except Exception:
                 pass
+        self._persist_jobs()
         return True
 
     def pause_training(self, training_id: str) -> bool:
@@ -977,6 +1028,7 @@ class TrainingManager:
                 trainer.stop = True
             except Exception:
                 pass
+        self._persist_jobs()
         return True
 
     def resume_training(self, training_id: str) -> Optional[str]:
@@ -1058,13 +1110,20 @@ class TrainingManager:
         return self.training_jobs[training_id].get("model_path")
 
     def list_training_jobs(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "id":         job["id"],
-                "status":     job["status"],
-                "progress":   job["progress"],
-                "model_type": job["model_type"],
-                "started_at": job["started_at"],
-            }
-            for job in self.training_jobs.values()
-        ]
+        """Return a summary of all training jobs, ordered newest-first."""
+        jobs = []
+        for job in self.training_jobs.values():
+            jobs.append({
+                "id":            job["id"],
+                "status":        job["status"],
+                "progress":      job["progress"],
+                "current_epoch": job.get("current_epoch", 0),
+                "total_epochs":  job.get("total_epochs", 0),
+                "model_type":    job["model_type"],
+                "started_at":    job["started_at"],
+                "model_path":    job.get("model_path"),
+                "error":         job.get("error"),
+            })
+        # newest first
+        jobs.sort(key=lambda j: j["started_at"], reverse=True)
+        return jobs
