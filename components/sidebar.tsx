@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect } from 'react'
 import { cn } from '@/lib/utils'
 import { VisosLogo } from "@/components/ui/visos-logo"
 import {
@@ -23,6 +24,7 @@ import {
   Activity,
   BarChart2,
   Archive,
+  X,
   type LucideIcon,
 } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
@@ -32,6 +34,8 @@ interface SidebarProps {
   activeView: ViewType
   setActiveView: (view: ViewType) => void
   selectedDataset: Dataset | null
+  isOpen?: boolean
+  onClose?: () => void
 }
 
 interface NavItem {
@@ -188,16 +192,53 @@ const navGroups: NavGroup[] = [
   },
 ]
 
-export function Sidebar({ activeView, setActiveView, selectedDataset }: SidebarProps) {
+export function Sidebar({ activeView, setActiveView, selectedDataset, isOpen = false, onClose }: SidebarProps) {
+  // Close sidebar on Escape key on mobile
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose?.() }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const handleNavigate = (view: ViewType) => {
+    setActiveView(view)
+    onClose?.()
+  }
+
   return (
-    <aside className="relative w-56 h-full flex flex-col bg-sidebar border-r border-sidebar-border overflow-hidden select-none shrink-0">
+    <>
+      {/* Mobile backdrop */}
+      {isOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/50 md:hidden"
+          onClick={onClose}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside className={cn(
+        'relative flex flex-col bg-sidebar border-r border-sidebar-border overflow-hidden select-none shrink-0',
+        // Desktop: always visible, fixed width
+        'md:w-56 md:h-full md:static md:translate-x-0 md:z-auto',
+        // Mobile: overlay slide-in
+        'max-md:fixed max-md:inset-y-0 max-md:left-0 max-md:w-72 max-md:z-50 max-md:h-full max-md:transition-transform max-md:duration-300',
+        isOpen ? 'max-md:translate-x-0' : 'max-md:-translate-x-full',
+      )}>
 
       {/* Ambient glow */}
       <div className="ambient-orb w-48 h-48 bg-primary -top-16 -left-16 absolute" />
 
       {/* Brand */}
-      <div className="relative px-5 pt-5 pb-4">
+      <div className="relative px-5 pt-5 pb-4 flex items-center justify-between">
         <VisosLogo size={100} showText={true} />
+        {/* Mobile close button */}
+        <button
+          className="md:hidden p-1.5 rounded-lg text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+          onClick={onClose}
+          aria-label="Close menu"
+        >
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
       {/* Active dataset pill */}
@@ -239,7 +280,7 @@ export function Sidebar({ activeView, setActiveView, selectedDataset }: SidebarP
                   <Tooltip key={item.id} delayDuration={700}>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={() => setActiveView(item.id)}
+                        onClick={() => handleNavigate(item.id)}
                         className={cn(
                           'group relative w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left',
                           'transition-all duration-150',
@@ -285,7 +326,7 @@ export function Sidebar({ activeView, setActiveView, selectedDataset }: SidebarP
         <Tooltip delayDuration={700}>
           <TooltipTrigger asChild>
             <button
-              onClick={() => setActiveView('settings')}
+              onClick={() => handleNavigate('settings')}
               className={cn(
                 'group relative w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left',
                 'transition-all duration-150',
@@ -321,5 +362,6 @@ export function Sidebar({ activeView, setActiveView, selectedDataset }: SidebarP
         </Tooltip>
       </div>
     </aside>
+    </>
   )
 }

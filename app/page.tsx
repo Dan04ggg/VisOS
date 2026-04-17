@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect } from 'react'
-import { Loader2, AlertTriangle, X, Database } from 'lucide-react'
+import { Loader2, AlertTriangle, X, Database, Menu } from 'lucide-react'
 import { Sidebar } from '@/components/sidebar'
 import { DatasetsView } from '@/components/datasets-view'
 import { DashboardView } from '@/components/dashboard-view'
@@ -144,6 +144,7 @@ export default function Home() {
   const [imageCache, setImageCache] = useState<ImageCache>({})
   const [annotateInitialImageId, setAnnotateInitialImageId] = useState<string | null>(null)
   const [gpuStatus, setGpuStatus] = useState<{ state: string; message: string } | null>(null)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
   // Sync activeView from URL after hydration, and on back/forward navigation
   useEffect(() => {
@@ -445,11 +446,33 @@ export default function Home() {
           )}
         </div>
       )}
+
+      {/* Mobile top bar — hidden on md+ */}
+      <div className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-sidebar shrink-0">
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="p-1.5 rounded-lg text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+          aria-label="Open menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <span className="text-sm font-semibold text-foreground capitalize">
+          {activeView.replace(/-/g, ' ')}
+        </span>
+        {selectedDataset && (
+          <span className="ml-auto text-[10px] font-mono text-primary truncate max-w-[140px]">
+            {selectedDataset.name}
+          </span>
+        )}
+      </div>
+
       <div className="flex flex-1 min-h-0 overflow-hidden">
         <Sidebar
           activeView={activeView}
           setActiveView={setActiveView}
           selectedDataset={selectedDataset}
+          isOpen={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
         />
         <main className="flex-1 overflow-y-auto min-w-0 bg-background">
           {renderView()}
