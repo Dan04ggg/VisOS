@@ -1775,7 +1775,7 @@ body.light::before { opacity: 0.4; }
   <p class="sec-intro">Download pretrained weights inside the app or import your own <code style="font-family:var(--mono);font-size:13px;color:var(--cyan)">.pt</code> / <code style="font-family:var(--mono);font-size:13px;color:var(--cyan)">.onnx</code> files.</p>
   <div class="models-cols reveal-tilt">
     <div class="model-group">
-      <div class="model-group-hd"><div class="mgdot" style="background:var(--fire)"></div>Detection</div>
+      <div class="model-group-hd"><div class="mgdot" style="background:var(--fire)"></div>Detection - Segmentation - Classification - Key-points</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--fire)"></div>YOLOv5 n/s</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--fire)"></div>YOLOv8 n/s/m/l/x</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--fire)"></div>YOLOv9 n/s/m/c/e</div>
@@ -1784,7 +1784,7 @@ body.light::before { opacity: 0.4; }
       <div class="model-chip"><div class="mcdot" style="background:var(--fire)"></div>RF-DETR Base/Large</div>
     </div>
     <div class="model-group">
-      <div class="model-group-hd"><div class="mgdot" style="background:#B84FFF"></div>Segmentation (SAM)</div>
+      <div class="model-group-hd"><div class="mgdot" style="background:#B84FFF"></div>Zero-Shot Segmentation</div>
       <div class="model-chip"><div class="mcdot" style="background:#B84FFF"></div>SAM ViT-B/L</div>
       <div class="model-chip"><div class="mcdot" style="background:#B84FFF"></div>SAM 2 Tiny/Small</div>
       <div class="model-chip"><div class="mcdot" style="background:#B84FFF"></div>SAM 2 Base+/Large</div>
@@ -1793,10 +1793,13 @@ body.light::before { opacity: 0.4; }
       <div class="model-chip"><div class="mcdot" style="background:#B84FFF"></div>SAM 3</div>
     </div>
     <div class="model-group">
-      <div class="model-group-hd"><div class="mgdot" style="background:var(--gold)"></div>Zero-Shot</div>
+      <div class="model-group-hd"><div class="mgdot" style="background:var(--gold)"></div>Zero-Shot Detection</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>GroundingDINO Tiny</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>GroundingDINO Base</div>
       <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>YOLO WORLD S/M/L</div>
+      <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>OWL-ViT Base (Patch32)</div>
+      <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>OWL-ViT Base (Patch16)</div>
+      <div class="model-chip"><div class="mcdot" style="background:var(--gold)"></div>OWL-ViT Large (Patch14)</div>
       <div class="zero-shot-note">
         <div class="zs-title">Zero-Shot Annotation</div>
         <p>Type a text prompt like <span style="font-family:var(--mono);color:var(--cyan)">"red car"</span> or <span style="font-family:var(--mono);color:var(--cyan)">"person holding phone"</span> — GroundingDINO annotates without any training examples.</p>
