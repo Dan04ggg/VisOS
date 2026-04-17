@@ -108,8 +108,11 @@ def _make_callbacks(job: Dict) -> Dict:
             last_pt = project / "weights" / "last.pt"
             if last_pt.exists():
                 job["last_checkpoint"] = str(last_pt)
-            if not job.get("model_path") and last_pt.exists():
                 job["model_path"] = str(last_pt)
+            # Transition "pausing" → "paused" now that the epoch is fully done
+            if job.get("status") == "pausing":
+                job["status"] = "paused"
+                job["logs"].append("Epoch complete — training paused. Checkpoint saved.")
             trainer.stop = True  # ultralytics flag to stop after epoch
 
         epoch = trainer.epoch + 1
@@ -318,11 +321,13 @@ class TrainingManager:
         format_name: str,
         model_type: str,
         config: Dict[str, Any],
+        name: str = "",
     ) -> str:
         training_id = str(uuid.uuid4())[:8]
 
         job: Dict[str, Any] = {
             "id":            training_id,
+            "name":          name.strip() or f"Run {training_id}",
             "dataset_path":  str(dataset_path),
             "format":        format_name,
             "model_type":    model_type,
@@ -349,6 +354,21 @@ class TrainingManager:
 
         return training_id
 
+    @staticmethod
+    def _release_memory(job: Dict) -> None:
+        """Release GPU VRAM and Python heap after training ends or is stopped."""
+        import gc
+        job.pop("_trainer", None)
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+        except Exception:
+            pass
+        gc.collect()
+        job["logs"].append("GPU VRAM and RAM released.")
+
     def _run_training(self, training_id: str):
         _restore_syspath()
         job = self.training_jobs[training_id]
@@ -369,10 +389,11 @@ class TrainingManager:
         except Exception as e:
             import traceback
             tb = traceback.format_exc()
-            job["status"] = "failed"
-            job["error"]  = str(e)
+            # Don't overwrite a deliberate pause/stop with "failed"
+            if job.get("status") not in ("paused", "pausing", "stopped"):
+                job["status"] = "failed"
+                job["error"]  = str(e)
             job["logs"].append(f"Fatal error: {e}")
-            # Log only the last part of traceback to keep logs readable
             short_tb = "\n".join(tb.strip().splitlines()[-8:])
             job["logs"].append(short_tb)
         finally:
@@ -503,6 +524,9 @@ class TrainingManager:
             job["status"] = "failed"
             job["error"]  = str(e)
             job["logs"].append(f"RF-DETR training error: {e}")
+        finally:
+            del model
+            self._release_memory(job)
 
     @staticmethod
     def _find_coco_json(dataset_path: Path, job: Dict) -> Optional[Path]:
@@ -540,72 +564,96 @@ class TrainingManager:
     @staticmethod
     def _get_label_dir(img_dir: Path) -> Optional[Path]:
         """Return the label directory that corresponds to an images directory."""
-        for candidate in [
+        candidates = [
+            # Standard YOLO layout: .../images/train → .../labels/train
             img_dir.parent.parent / "labels" / img_dir.name,
+            # Flat layout: .../train/images → .../train/labels  (path ends with 'images')
+            img_dir.parent / "labels",
+            # String-replace variants for mixed separator environments
             Path(str(img_dir).replace(f"{Path.sep}images{Path.sep}", f"{Path.sep}labels{Path.sep}")),
             Path(str(img_dir).replace("/images/", "/labels/")),
-        ]:
+        ]
+        for candidate in candidates:
             if candidate.exists() and candidate.is_dir():
                 return candidate
         return None
 
     @staticmethod
     def _validate_seg_labels(data_yaml: Path, job: Dict) -> None:
-        """Scan YOLO segmentation label files and remove lines that lack valid polygon
-        coordinates (< 7 tokens). These cause DataLoader IndexErrors inside ultralytics."""
-        try:
-            import yaml as _yaml
-            with open(data_yaml) as f:
-                cfg = _yaml.safe_load(f)
-        except Exception as e:
-            job["logs"].append(f"[Validate] Cannot read {data_yaml}: {e}")
-            return
+        """Scan YOLO segmentation label files and ensure every annotation line is a
+        valid polygon (≥ 7 tokens: class + at least 3 x/y pairs).
 
-        base = data_yaml.parent
-        total_fixed = 0
+        Bbox-only lines (exactly 5 tokens) are removed — mixing bbox and polygon
+        annotations in the same dataset triggers YOLO's 'segment counts ≠ box counts'
+        warning which strips ALL segments and causes an index-out-of-bounds crash
+        in the segmentation loss.  Truncated / malformed lines are also dropped.
+
+        NOTE: We scan the dataset root directly (not via yaml paths) because many
+        Roboflow-exported yamls use '../train/images' which resolves outside the dataset
+        folder when parsed in Python, causing the yaml-based scan to miss all files.
+        """
+        dataset_root = data_yaml.parent
+        total_removed = 0
         total_checked = 0
 
-        for split_key in ("train", "val", "test"):
-            split_val = cfg.get(split_key)
-            if not split_val:
-                continue
-            img_dir = Path(split_val) if Path(split_val).is_absolute() else base / split_val
-            if not img_dir.exists():
-                continue
-            lbl_dir = TrainingManager._get_label_dir(img_dir)
-            if not lbl_dir:
-                continue
+        # Collect all candidate label directories under the dataset root
+        lbl_dirs: List[Path] = []
+        for split_name in ("train", "valid", "val", "test"):
+            candidate = dataset_root / split_name / "labels"
+            if candidate.is_dir():
+                lbl_dirs.append(candidate)
+        # Also honour any labels/ dir sitting directly at dataset_root
+        if (dataset_root / "labels").is_dir():
+            lbl_dirs.append(dataset_root / "labels")
 
+        if not lbl_dirs:
+            job["logs"].append("[Validate] No label directories found — skipping validation")
+            return
+
+        total_files = sum(len(list(d.glob("*.txt"))) for d in lbl_dirs)
+        job["logs"].append(f"[Validate] Checking {total_files} label file(s) across {len(lbl_dirs)} split(s)…")
+
+        for lbl_dir in lbl_dirs:
             for lbl_file in lbl_dir.glob("*.txt"):
                 total_checked += 1
                 try:
                     raw = lbl_file.read_text(encoding="utf-8", errors="replace").strip()
                     if not raw:
                         continue  # empty = background image, OK
-                    good, bad = [], 0
+                    good, removed = [], 0
                     for line in raw.splitlines():
                         parts = line.strip().split()
                         if not parts:
                             continue
-                        if len(parts) == 5:
-                            good.append(line)   # bbox line — keep
-                        elif len(parts) >= 7:
+                        if len(parts) >= 7:
                             good.append(line)   # valid polygon — keep
                         else:
-                            bad += 1            # truncated polygon — drop
-                    if bad:
+                            removed += 1        # bbox-only or truncated — drop
+                    if removed:
                         lbl_file.write_text("\n".join(good) + ("\n" if good else ""))
-                        total_fixed += bad
+                        total_removed += removed
                 except Exception as ex:
                     job["logs"].append(f"[Validate] {lbl_file.name}: {ex}")
 
-        if total_fixed:
+        # Delete YOLO label cache files so the fixed labels are rescanned by YOLO
+        # (stale .cache files make YOLO use the pre-fix data regardless of label changes)
+        deleted_caches = 0
+        for cache_file in dataset_root.rglob("labels.cache"):
+            try:
+                cache_file.unlink()
+                deleted_caches += 1
+            except Exception:
+                pass
+
+        if total_removed:
             job["logs"].append(
-                f"[Validate] Removed {total_fixed} malformed polygon lines from {total_checked} files "
-                f"(would have caused DataLoader IndexError)"
+                f"[Validate] Removed {total_removed} non-polygon lines from {total_checked} files "
+                f"(bbox-only / truncated lines cause mixed-dataset crash in segmentation training)"
             )
         else:
             job["logs"].append(f"[Validate] Labels OK — {total_checked} label files checked")
+        if deleted_caches:
+            job["logs"].append(f"[Validate] Cleared {deleted_caches} stale label cache(s)")
 
     @staticmethod
     def _labels_are_segmentation(data_yaml: Path) -> bool:
@@ -742,10 +790,11 @@ class TrainingManager:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics", "-q"])
             from ultralytics import YOLO
 
-        job["status"] = "running"
         config        = job["config"]
         dataset_path  = Path(job["dataset_path"])
 
+        # ── Dataset preparation phase (status stays "starting" so UI shows "Preparing dataset…")
+        job["logs"].append("Scanning dataset…")
         data_yaml = self._find_yaml(dataset_path, job)
         if not data_yaml:
             return
@@ -763,6 +812,9 @@ class TrainingManager:
                 job["logs"].append(
                     "Seg→BBox conversion failed; attempting to train with original labels."
                 )
+
+        job["logs"].append("Dataset ready — starting training.")
+        job["status"] = "running"
 
         device = _resolve_device(config, job)
 
@@ -788,6 +840,7 @@ class TrainingManager:
                 name="train",
                 exist_ok=True,
                 verbose=False,
+                workers=0,  # avoid multiprocessing issues in daemon threads on Windows
                 # advanced hypers
                 lr0=config.get("lr0", 0.01),
                 lrf=config.get("lrf", 0.01),
@@ -807,13 +860,14 @@ class TrainingManager:
             )
             best_pt = output_dir / "train" / "weights" / "best.pt"
             last_pt = output_dir / "train" / "weights" / "last.pt"
-            job["model_path"] = str(best_pt if best_pt.exists() else last_pt)
-            job["status"]     = "completed"
-            job["progress"]   = 100
-            job["logs"].append("✓ Detection training complete")
-            job["logs"].append(f"Weights: {job['model_path']}")
-            if hasattr(results, "results_dict"):
-                job["metrics"].update(results.results_dict)
+            if job.get("status") not in ("paused", "pausing", "stopped"):
+                job["model_path"] = str(best_pt if best_pt.exists() else last_pt)
+                job["status"]     = "completed"
+                job["progress"]   = 100
+                job["logs"].append("✓ Detection training complete")
+                job["logs"].append(f"Weights: {job['model_path']}")
+                if hasattr(results, "results_dict"):
+                    job["metrics"].update(results.results_dict)
         except Exception as e:
             job["status"] = "failed"
             job["error"]  = str(e)
@@ -824,6 +878,9 @@ class TrainingManager:
                     job["model_path"] = str(pt)
                     job["logs"].append(f"Partial weights available: {pt}")
                     break
+        finally:
+            del model
+            self._release_memory(job)
 
     # ── Segmentation ──────────────────────────────────────────────────────────
 
@@ -835,10 +892,11 @@ class TrainingManager:
             subprocess.check_call([sys.executable, "-m", "pip", "install", "ultralytics", "-q"])
             from ultralytics import YOLO
 
-        job["status"] = "running"
         config        = job["config"]
         dataset_path  = Path(job["dataset_path"])
 
+        # ── Dataset preparation phase (status stays "starting" so UI shows "Preparing dataset…")
+        job["logs"].append("Scanning dataset…")
         data_yaml = self._find_yaml(dataset_path, job)
         if not data_yaml:
             return
@@ -846,6 +904,9 @@ class TrainingManager:
         # Validate and fix segmentation labels before training to prevent DataLoader IndexErrors
         job["logs"].append("Validating segmentation labels…")
         self._validate_seg_labels(data_yaml, job)
+        job["logs"].append("Dataset ready — starting training.")
+
+        job["status"] = "running"
 
         device = _resolve_device(config, job)
 
@@ -871,6 +932,7 @@ class TrainingManager:
                 name="train",
                 exist_ok=True,
                 verbose=False,
+                workers=0,  # avoid multiprocessing issues in daemon threads on Windows
                 lr0=config.get("lr0", 0.01),
                 lrf=config.get("lrf", 0.01),
                 optimizer=config.get("optimizer", "SGD"),
@@ -890,11 +952,12 @@ class TrainingManager:
             # Use last.pt if best.pt wasn't saved (e.g. early stop)
             best_pt = output_dir / "train" / "weights" / "best.pt"
             last_pt = output_dir / "train" / "weights" / "last.pt"
-            job["model_path"] = str(best_pt if best_pt.exists() else last_pt)
-            job["status"]     = "completed"
-            job["progress"]   = 100
-            job["logs"].append("✓ Segmentation training complete")
-            job["logs"].append(f"Weights: {job['model_path']}")
+            if job.get("status") not in ("paused", "pausing", "stopped"):
+                job["model_path"] = str(best_pt if best_pt.exists() else last_pt)
+                job["status"]     = "completed"
+                job["progress"]   = 100
+                job["logs"].append("✓ Segmentation training complete")
+                job["logs"].append(f"Weights: {job['model_path']}")
         except Exception as e:
             job["status"] = "failed"
             job["error"]  = str(e)
@@ -906,6 +969,9 @@ class TrainingManager:
                     job["model_path"] = str(pt)
                     job["logs"].append(f"Partial weights available: {pt}")
                     break
+        finally:
+            del model
+            self._release_memory(job)
 
     # ── Classification ────────────────────────────────────────────────────────
 
@@ -944,15 +1010,20 @@ class TrainingManager:
                 name="train",
                 exist_ok=True,
                 verbose=False,
+                workers=0,  # avoid multiprocessing issues in daemon threads on Windows
             )
-            job["status"]     = "completed"
-            job["progress"]   = 100
-            job["model_path"] = str(output_dir / "train" / "weights" / "best.pt")
-            job["logs"].append("✓ Classification training complete")
+            if job.get("status") not in ("paused", "pausing", "stopped"):
+                job["status"]     = "completed"
+                job["progress"]   = 100
+                job["model_path"] = str(output_dir / "train" / "weights" / "best.pt")
+                job["logs"].append("✓ Classification training complete")
         except Exception as e:
             job["status"] = "failed"
             job["error"]  = str(e)
             job["logs"].append(f"Training error: {e}")
+        finally:
+            del model
+            self._release_memory(job)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -981,6 +1052,7 @@ class TrainingManager:
         job = self.training_jobs[training_id]
         return {
             "id":            job.get("id", training_id),
+            "name":          job.get("name", f"Run {training_id}"),
             "status":        job.get("status", "unknown"),
             "progress":      job.get("progress", 0),
             "current_epoch": job.get("current_epoch", 0),
@@ -1020,8 +1092,8 @@ class TrainingManager:
         if job.get("status") not in ("running", "starting"):
             return False
         job["_stop_requested"] = True
-        job["status"] = "paused"
-        job["logs"].append("Pause requested — training will stop after this epoch and save a checkpoint.")
+        job["status"] = "pausing"   # intermediate — transitions to "paused" in on_fit_epoch_end
+        job["logs"].append("Pausing… finishing current epoch before stopping.")
         trainer = job.get("_trainer")
         if trainer is not None:
             try:
@@ -1032,60 +1104,80 @@ class TrainingManager:
         return True
 
     def resume_training(self, training_id: str) -> Optional[str]:
-        """Resume a paused training job from the last saved checkpoint."""
+        """Resume a paused or interrupted training job from the last saved checkpoint."""
         if training_id not in self.training_jobs:
             return None
         job = self.training_jobs[training_id]
-        if job.get("status") != "paused":
+        if job.get("status") not in ("paused", "interrupted"):
             return None
 
+        # Find the checkpoint to resume from
         last_checkpoint = job.get("last_checkpoint") or job.get("model_path")
         if not last_checkpoint or not Path(last_checkpoint).exists():
-            # Try to find last.pt in a known location
             dataset_path = Path(job["dataset_path"])
             job_id = job["id"]
-            for pattern in [f"runs/train_{job_id}/train/weights/last.pt",
-                             f"runs/segment_{job_id}/train/weights/last.pt",
+            for pattern in [f"runs/segment_{job_id}/train/weights/last.pt",
+                             f"runs/train_{job_id}/train/weights/last.pt",
                              f"runs/classify_{job_id}/train/weights/last.pt"]:
                 candidate = dataset_path / pattern
                 if candidate.exists():
                     last_checkpoint = str(candidate)
                     break
 
-        if not last_checkpoint:
+        if not last_checkpoint or not Path(last_checkpoint).exists():
             return None
 
-        # Clear stop flag, reset to running
+        mt = job["model_type"]
+        if mt == "rfdetr":
+            job["logs"].append("RF-DETR does not support checkpoint resume.")
+            return None
+
+        # Clear stop flag and reset to running
         job["_stop_requested"] = False
         job["_trainer"] = None
         job["status"] = "running"
+        job["last_checkpoint"] = last_checkpoint
         job["logs"].append(f"Resuming from checkpoint: {last_checkpoint}")
-
-        # Start a new thread that resumes training
-        mt = job["model_type"]
-        if mt == "rfdetr":
-            job["logs"].append("RF-DETR does not support checkpoint resume — cannot resume.")
-            job["status"] = "paused"
-            return None
+        self._persist_jobs()
 
         def _resume():
             _restore_syspath()
             try:
                 from ultralytics import YOLO
                 model = YOLO(last_checkpoint)
-                model.train(resume=True)
-                job["status"] = "completed"
-                job["progress"] = 100
-                job["logs"].append("✓ Training resumed and completed.")
+                cbs = _make_callbacks(job)
+                for cb_name, fn in cbs.items():
+                    model.add_callback(cb_name, fn)
+                model.train(resume=True, workers=0)
+                if job.get("status") not in ("paused", "pausing", "stopped"):
+                    job["status"]   = "completed"
+                    job["progress"] = 100
+                    job["logs"].append("✓ Training resumed and completed.")
             except Exception as e:
-                job["status"] = "failed"
-                job["error"] = str(e)
-                job["logs"].append(f"Resume error: {e}")
+                if job.get("status") not in ("paused", "pausing", "stopped"):
+                    job["status"] = "failed"
+                    job["error"]  = str(e)
+                    job["logs"].append(f"Resume error: {e}")
+            finally:
+                try:
+                    del model
+                except Exception:
+                    pass
+                TrainingManager._release_memory(job)
+                TrainingManager._instance_persist(job, self)
 
         thread = threading.Thread(target=_resume, daemon=True)
         thread.start()
         self.training_threads[training_id] = thread
         return training_id
+
+    @staticmethod
+    def _instance_persist(job: Dict, manager: "TrainingManager") -> None:
+        """Helper so the _resume closure can call _persist_jobs without capturing self."""
+        try:
+            manager._persist_jobs()
+        except Exception:
+            pass
 
     def export_model_format(self, training_id: str, fmt: str) -> Optional[str]:
         """Export a trained model to the given format (onnx, tflite, coreml, engine)."""
@@ -1113,8 +1205,10 @@ class TrainingManager:
         """Return a summary of all training jobs, ordered newest-first."""
         jobs = []
         for job in self.training_jobs.values():
+            job_id = job["id"]
             jobs.append({
-                "id":            job["id"],
+                "id":            job_id,
+                "name":          job.get("name", f"Run {job_id}"),
                 "status":        job["status"],
                 "progress":      job["progress"],
                 "current_epoch": job.get("current_epoch", 0),
@@ -1123,6 +1217,7 @@ class TrainingManager:
                 "started_at":    job["started_at"],
                 "model_path":    job.get("model_path"),
                 "error":         job.get("error"),
+                "last_checkpoint": job.get("last_checkpoint"),
             })
         # newest first
         jobs.sort(key=lambda j: j["started_at"], reverse=True)

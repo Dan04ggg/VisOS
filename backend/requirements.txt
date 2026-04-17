@@ -29,6 +29,7 @@ ultralytics>=8.1.0  # YOLO models - auto-installed if missing
 
 # System Monitoring (Optional but recommended)
 psutil>=5.9.0
+nvidia-ml-py>=12.0.0  # GPU utilization stats (pynvml) — NVIDIA only
 
 # Utilities
 tqdm>=4.65.0

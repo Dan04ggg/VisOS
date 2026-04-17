@@ -16,7 +16,6 @@ import {
   Pause, 
   Square, 
   Cpu,
-  Zap,
   Settings2,
   Terminal,
   TrendingUp,
@@ -74,7 +73,8 @@ interface LogEntry {
 /** Shape returned by GET /api/train/:id/status */
 interface TrainingStatus {
   id: string
-  status: "starting" | "running" | "completed" | "failed" | "stopped" | "paused" | "interrupted"
+  name: string
+  status: "starting" | "running" | "pausing" | "completed" | "failed" | "stopped" | "paused" | "interrupted"
   progress: number
   current_epoch: number
   total_epochs: number
@@ -246,10 +246,14 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   const [gpuWarning, setGpuWarning]       = useState<string | null>(null)
   const [installingCuda, setInstallingCuda] = useState(false)
 
+  // Run name
+  const [runName, setRunName]         = useState("")
+
   // Runtime state
   const [trainingId, setTrainingId]   = useState<string | null>(null)
   const [isTraining, setIsTraining]   = useState(false)
   const [isPaused, setIsPaused]       = useState(false)   // true when training is paused on backend
+  const [isPausing, setIsPausing]     = useState(false)   // true while finishing current epoch before pause
   const [currentEpoch, setCurrentEpoch] = useState(0)
   const [totalEpochs, setTotalEpochs] = useState(100)
   const [progress, setProgress]       = useState(0)
@@ -258,14 +262,22 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   const [statusLabel, setStatusLabel] = useState<string>("")
   const [modelPath, setModelPath]     = useState<string | null>(null)
   const [error, setError]             = useState<string | null>(null)
+
+  // Past runs — all jobs from backend, refreshed on mount and after training ends
+  interface RunSummary {
+    id: string; name: string; status: string; progress: number
+    current_epoch: number; total_epochs: number; model_type: string
+    started_at: string; model_path: string | null; last_checkpoint?: string | null
+  }
+  const [pastRuns, setPastRuns]       = useState<RunSummary[]>([])
   const [deviceInfo, setDeviceInfo]   = useState<string | null>(null)
   const [liveGpuMem, setLiveGpuMem]   = useState<number | null>(null)
 
   // Real system stats — polled from /api/system while training
-  const [gpuUsage, setGpuUsage]         = useState(0)
+  const [cpuUsage, setCpuUsage]         = useState(0)
+  const [gpuUsage, setGpuUsage]         = useState<number | null>(null)
   const [memoryUsage, setMemoryUsage]   = useState(0)
   const [gpuName, setGpuName]           = useState<string | null>(null)
-  const [hasGpu, setHasGpu]             = useState<boolean | null>(null) // null = unknown yet
   const systemPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const pollRef          = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -330,14 +342,12 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         const res = await fetch(`${apiUrl}/api/system`)
         if (!res.ok) return
         const data = await res.json()
-        // Use GPU percent if available, otherwise fall back to CPU
+        setCpuUsage(data.cpu_percent ?? 0)
         if (data.gpu_percent !== null && data.gpu_percent !== undefined) {
           setGpuUsage(data.gpu_percent)
-          setHasGpu(true)
           if (data.gpu_name) setGpuName(data.gpu_name)
         } else {
-          setGpuUsage(data.cpu_percent ?? 0)
-          setHasGpu(false)
+          setGpuUsage(null)
         }
         setMemoryUsage(data.gpu_memory_percent ?? data.ram_percent ?? 0)
       } catch {
@@ -372,56 +382,71 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   useEffect(() => {
     const restore = async () => {
       try {
-        // 1. List all known jobs from backend
         const res = await fetch(`${apiUrl}/api/train/jobs`)
         if (!res.ok) return
         const data = await res.json()
-        const jobs: Array<{
-          id: string; status: string; progress: number;
-          current_epoch: number; total_epochs: number;
-          model_path: string | null; error?: string
-        }> = data.jobs || []
+        const jobs: RunSummary[] = data.jobs || []
 
-        // Find the most recently started job that needs attention
+        // Always populate the past-runs list
+        setPastRuns(jobs)
+
+        // Restore the most recent active job into the main view
         const active = jobs.find(j =>
-          j.status === 'running' || j.status === 'starting' || j.status === 'paused'
+          j.status === 'running' || j.status === 'starting' || j.status === 'pausing'
         )
         if (active) {
           setTrainingId(active.id)
-          setIsTraining(active.status === 'running' || active.status === 'starting')
-          setIsPaused(active.status === 'paused')
+          setIsTraining(true)
+          setIsPaused(false)
+          setIsPausing(active.status === 'pausing')
           setProgress(active.progress ?? 0)
           setCurrentEpoch(active.current_epoch ?? 0)
           setTotalEpochs(active.total_epochs ?? 100)
-          setStatusLabel(active.status === 'paused' ? 'Paused' : 'Running')
-          addLog(`Restored training job (id: ${active.id}) — still ${active.status}`, 'info')
+          setStatusLabel(active.status === 'pausing' ? 'Finishing epoch…' : 'Running')
+          addLog(`Restored training job "${active.name}" (id: ${active.id})`, 'info')
           return
         }
 
-        // 2. Also check for an interrupted job (backend restart while training)
+        // Restore paused job into the main view so the user can resume it
+        const paused = jobs.find(j => j.status === 'paused')
+        if (paused) {
+          setTrainingId(paused.id)
+          setIsTraining(false)
+          setIsPaused(true)
+          setProgress(paused.progress ?? 0)
+          setCurrentEpoch(paused.current_epoch ?? 0)
+          setTotalEpochs(paused.total_epochs ?? 100)
+          setStatusLabel('Paused')
+          if (paused.model_path) setModelPath(paused.model_path)
+          addLog(`Restored paused run "${paused.name}" (id: ${paused.id}) — click Resume to continue`, 'info')
+          return
+        }
+
+        // Restore interrupted job
         const interrupted = jobs.find(j => j.status === 'interrupted')
         if (interrupted) {
           setTrainingId(interrupted.id)
           setIsTraining(false)
+          setIsPaused(true)   // allow Resume button
           setProgress(interrupted.progress ?? 0)
+          setCurrentEpoch(interrupted.current_epoch ?? 0)
+          setTotalEpochs(interrupted.total_epochs ?? 100)
           setStatusLabel('Interrupted')
           if (interrupted.model_path) setModelPath(interrupted.model_path)
-          addLog(`Previous training (id: ${interrupted.id}) was interrupted by a backend restart.`, 'warning')
+          addLog(`Run "${interrupted.name}" was interrupted by a backend restart — click Resume to continue`, 'warning')
           return
         }
 
-        // 3. Fallback: localStorage for a completed/failed job the user might want to see
+        // Fallback: last known completed/failed job from localStorage
         const savedId = localStorage.getItem('cvdm_training_id')
-        if (savedId && !jobs.find(j => j.id === savedId)) return  // not in backend anymore
         if (savedId) {
-          const completed = jobs.find(j => j.id === savedId)
-          if (completed && (completed.status === 'completed' || completed.status === 'failed' || completed.status === 'stopped')) {
+          const last = jobs.find(j => j.id === savedId)
+          if (last && (last.status === 'completed' || last.status === 'failed' || last.status === 'stopped')) {
             setTrainingId(savedId)
             setIsTraining(false)
-            setProgress(completed.progress ?? 0)
-            setStatusLabel(completed.status.charAt(0).toUpperCase() + completed.status.slice(1))
-            if (completed.model_path) setModelPath(completed.model_path)
-            if (completed.error) setError(completed.error)
+            setProgress(last.progress ?? 0)
+            setStatusLabel(last.status.charAt(0).toUpperCase() + last.status.slice(1))
+            if (last.model_path) setModelPath(last.model_path)
           }
         }
       } catch { /* backend not reachable yet */ }
@@ -434,6 +459,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   // -------------------------------------------------------------------------
 
   useEffect(() => {
+    // Stop polling only when fully paused/stopped — NOT while still finishing an epoch
     if (!trainingId || isPaused) {
       stopPolling()
       return
@@ -468,51 +494,67 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           }
         })
 
-        if (data.status === "completed") {
+        if (data.status === "pausing") {
           failedPollCount.current = 0
-          setIsTraining(false)
+          setIsPausing(true)
+          setStatusLabel("Finishing epoch…")
+          // keep polling — backend will transition to "paused" when the epoch completes
+        } else if (data.status === "completed") {
+          failedPollCount.current = 0
+          setIsTraining(false); setIsPausing(false)
           if (data.model_path) setModelPath(data.model_path)
           addLog("Training completed successfully! Model saved.", "success")
           setStatusLabel("Completed")
-          setGpuUsage(0); setMemoryUsage(0)
+          setCpuUsage(0); setGpuUsage(null); setMemoryUsage(0)
           stopPolling()
+          fetch(`${apiUrl}/api/train/jobs`).then(r => r.json()).then(d => setPastRuns(d.jobs || [])).catch(() => {})
         } else if (data.status === "failed") {
-          // Keep polling for a grace period so the user can see any final log lines
-          // and download partial weights if available. Stop after 15 consecutive fails.
+          // Poll a couple more times to flush any final log lines, then stop.
           failedPollCount.current += 1
-          setIsTraining(false)
+          setIsTraining(false); setIsPausing(false)
           if (data.model_path) setModelPath(data.model_path)
           setError(data.error ?? "Unknown error")
           setStatusLabel("Failed")
-          setGpuUsage(0); setMemoryUsage(0)
-          if (failedPollCount.current >= 15) {
+          setCpuUsage(0); setGpuUsage(null); setMemoryUsage(0)
+          if (failedPollCount.current >= 3) {
             stopPolling()
+            fetch(`${apiUrl}/api/train/jobs`).then(r => r.json()).then(d => setPastRuns(d.jobs || [])).catch(() => {})
           }
         } else if (data.status === "stopped") {
           failedPollCount.current = 0
-          setIsTraining(false)
+          setIsTraining(false); setIsPausing(false)
           if (data.model_path) setModelPath(data.model_path)
           addLog("Training was stopped.", "warning")
           setStatusLabel("Stopped")
-          setGpuUsage(0); setMemoryUsage(0)
+          setCpuUsage(0); setGpuUsage(null); setMemoryUsage(0)
           stopPolling()
+          fetch(`${apiUrl}/api/train/jobs`).then(r => r.json()).then(d => setPastRuns(d.jobs || [])).catch(() => {})
         } else if (data.status === "paused") {
           failedPollCount.current = 0
-          setIsPaused(true)
+          setIsTraining(false); setIsPausing(false); setIsPaused(true)
           if (data.model_path) setModelPath(data.model_path)
-          addLog("Training paused — checkpoint saved. Click Resume to continue.", "info")
+          addLog("Epoch complete — training paused. Click Resume to continue.", "info")
           setStatusLabel("Paused")
-          setGpuUsage(0); setMemoryUsage(0)
+          setCpuUsage(0); setGpuUsage(null); setMemoryUsage(0)
           stopPolling()
+          fetch(`${apiUrl}/api/train/jobs`).then(r => r.json()).then(d => setPastRuns(d.jobs || [])).catch(() => {})
         } else if (data.status === "interrupted") {
           failedPollCount.current = 0
           setIsTraining(false)
           if (data.model_path) setModelPath(data.model_path)
           setStatusLabel("Interrupted")
-          setGpuUsage(0); setMemoryUsage(0)
+          setCpuUsage(0); setGpuUsage(null); setMemoryUsage(0)
           stopPolling()
         } else {
-          failedPollCount.current = 0  // reset on any healthy status
+          // status is "running" or "starting" — re-sync isTraining in case the
+          // component was remounted (navigation) or the state drifted
+          failedPollCount.current = 0
+          setIsTraining(true)
+          if (data.status === "starting") {
+            setStatusLabel("Preparing dataset…")
+          } else {
+            setStatusLabel(prev => (prev === "Preparing dataset…" || prev === "Starting…") ? "Running" : prev)
+          }
         }
       } catch (err) {
         addLog(`Polling error: ${err instanceof Error ? err.message : err}`, "error")
@@ -569,6 +611,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
     seenLogCount.current = 0
     failedPollCount.current = 0
     setIsPaused(false)
+    setIsPausing(false)
     setStatusLabel("Starting…")
 
     const backendModelType = getModelType(modelArch)
@@ -578,6 +621,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          name: runName.trim(),
           dataset_id: selectedDatasetId,
           model_type: backendModelType,
           model_arch: modelArch,
@@ -644,14 +688,14 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   async function handlePauseResume() {
     if (!trainingId) return
     if (!isPaused) {
-      // Pause: call backend to stop after current epoch and save checkpoint
+      // Pause: signal backend — keep polling so we see "pausing" → "paused" transition
       try {
         const res = await fetch(`${apiUrl}/api/train/${trainingId}/pause`, { method: "POST" })
         if (res.ok) {
-          addLog("Pause requested — training will stop after this epoch and save a checkpoint.", "info")
-          setIsPaused(true)
-          setStatusLabel("Pausing…")
-          stopPolling()
+          setIsPausing(true)
+          setStatusLabel("Finishing epoch…")
+          // Do NOT stop polling or set isPaused here — the poll handler does that
+          // when the backend responds with status "paused"
         } else {
           addLog("Pause failed.", "error")
         }
@@ -659,21 +703,28 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         addLog(`Pause request failed: ${err instanceof Error ? err.message : err}`, "error")
       }
     } else {
-      // Resume: call backend to restart training from last checkpoint
-      try {
-        const res = await fetch(`${apiUrl}/api/train/${trainingId}/resume`, { method: "POST" })
-        if (res.ok) {
-          addLog("Training resumed from checkpoint.", "info")
-          setStatusLabel("Running")
-          // Setting isPaused to false triggers the polling useEffect to restart
-          setIsPaused(false)
-        } else {
-          const err = await res.json().catch(() => ({ detail: "Resume failed" }))
-          addLog(`Resume failed: ${err.detail}`, "error")
-        }
-      } catch (err: unknown) {
-        addLog(`Resume request failed: ${err instanceof Error ? err.message : err}`, "error")
+      await doResume(trainingId)
+    }
+  }
+
+  async function doResume(id: string) {
+    try {
+      const res = await fetch(`${apiUrl}/api/train/${id}/resume`, { method: "POST" })
+      if (res.ok) {
+        setTrainingId(id)
+        setIsPaused(false)
+        setIsPausing(false)
+        setIsTraining(true)
+        setStatusLabel("Running")
+        seenLogCount.current = 0   // re-stream all logs from this job
+        failedPollCount.current = 0
+        addLog("Resuming training from checkpoint…", "info")
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Resume failed" }))
+        addLog(`Resume failed: ${err.detail}`, "error")
       }
+    } catch (err: unknown) {
+      addLog(`Resume request failed: ${err instanceof Error ? err.message : err}`, "error")
     }
   }
 
@@ -714,7 +765,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   const prevMetrics   = metrics[metrics.length - 2]
 
   const etaDisplay = (() => {
-    if (!isTraining || isPaused || currentEpoch === 0) return null
+    if (!isTraining || isPaused || isPausing || currentEpoch === 0) return null
     const remaining = totalEpochs - currentEpoch
     // Use real speed_ms per iteration if available; rough fallback 30s/epoch
     const secsPerEpoch = latestMetrics?.speed_ms
@@ -742,9 +793,14 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         <div className="flex items-center gap-2">
           {isTraining ? (
             <>
-              <Button variant="outline" onClick={handlePauseResume} className="gap-2">
+              <Button
+                variant="outline"
+                onClick={handlePauseResume}
+                disabled={isPausing}
+                className="gap-2"
+              >
                 {isPaused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
-                {isPaused ? "Resume" : "Pause"}
+                {isPausing ? "Finishing epoch…" : isPaused ? "Resume" : "Pause"}
               </Button>
               <Button variant="destructive" onClick={handleStopTraining} className="gap-2">
                 <Square className="w-4 h-4" />
@@ -848,6 +904,17 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
                 )
                 return null
               })()}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Run Name</label>
+              <Input
+                placeholder="e.g. cityscapes-run-1"
+                value={runName}
+                onChange={e => setRunName(e.target.value)}
+                disabled={isTraining}
+                className="text-sm"
+              />
             </div>
 
             <div className="space-y-2">
@@ -1214,24 +1281,23 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           <div className="grid grid-cols-3 gap-4">
             <SystemStat
               icon={<Cpu className="w-5 h-5 text-primary" />}
-              label={hasGpu === true ? `GPU${gpuName ? ` (${gpuName.split(" ").pop()})` : ""}` : "CPU"}
-              value={hasGpu === null ? "—" : `${gpuUsage.toFixed(0)}%`}
-              progress={gpuUsage}
+              label="CPU"
+              value={`${cpuUsage.toFixed(0)}%`}
+              progress={cpuUsage}
             />
             <SystemStat
               icon={<HardDrive className="w-5 h-5 text-primary" />}
-              label={liveGpuMem != null ? "VRAM Used" : hasGpu === true ? "GPU Memory" : "RAM"}
+              label={liveGpuMem != null ? "VRAM Used" : gpuUsage !== null ? "GPU Memory" : "RAM"}
               value={liveGpuMem != null
                 ? `${liveGpuMem.toFixed(2)} GB`
-                : hasGpu === null ? "—" : `${memoryUsage.toFixed(0)}%`}
+                : `${memoryUsage.toFixed(0)}%`}
               progress={liveGpuMem == null ? memoryUsage : undefined}
             />
             <SystemStat
-              icon={<Zap className="w-5 h-5 text-primary" />}
-              label="Speed"
-              value={latestMetrics?.speed_ms != null
-                ? `${latestMetrics.speed_ms.toFixed(0)} ms/it`
-                : statusLabel || "Idle"}
+              icon={<Activity className="w-5 h-5 text-primary" />}
+              label={gpuUsage !== null ? `GPU${gpuName ? ` (${gpuName.split(" ").pop()})` : ""}` : "GPU"}
+              value={gpuUsage !== null ? `${gpuUsage.toFixed(0)}%` : "—"}
+              progress={gpuUsage ?? undefined}
             />
           </div>
 
@@ -1267,6 +1333,86 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           </Card>
         </div>
       </div>
+
+      {/* Past Runs */}
+      {pastRuns.length > 0 && (
+        <Collapsible>
+          <Card className="border-border/50 bg-card/50 backdrop-blur">
+            <CollapsibleTrigger asChild>
+              <CardHeader className="cursor-pointer hover:bg-muted/20 rounded-t-lg pb-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <Package className="w-4 h-4 text-primary" />
+                  Past Runs
+                  <Badge variant="outline" className="ml-1 text-xs">{pastRuns.length}</Badge>
+                  <ChevronDown className="w-4 h-4 ml-auto text-muted-foreground" />
+                </CardTitle>
+              </CardHeader>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <CardContent className="pt-0 space-y-2">
+                {pastRuns.map(run => (
+                  <div key={run.id} className="flex items-center gap-3 p-2 rounded-lg border border-border/40 bg-background/40">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium truncate">{run.name}</span>
+                        <Badge
+                          variant="outline"
+                          className={`text-[10px] shrink-0 ${
+                            run.status === "completed"   ? "text-green-400 border-green-400/30" :
+                            run.status === "failed"      ? "text-red-400 border-red-400/30" :
+                            run.status === "paused"      ? "text-yellow-400 border-yellow-400/30" :
+                            run.status === "interrupted" ? "text-orange-400 border-orange-400/30" :
+                            run.status === "running" || run.status === "pausing" ? "text-blue-400 border-blue-400/30" :
+                            "text-muted-foreground"
+                          }`}
+                        >
+                          {run.status}
+                        </Badge>
+                        <span className="text-[10px] text-muted-foreground shrink-0">{run.model_type}</span>
+                      </div>
+                      <div className="flex items-center gap-2 mt-1">
+                        <div className="flex-1 h-1 rounded bg-muted overflow-hidden">
+                          <div className="h-full bg-primary/60 rounded" style={{ width: `${run.progress}%` }} />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {run.current_epoch}/{run.total_epochs} ep
+                        </span>
+                        <span className="text-[10px] text-muted-foreground shrink-0">
+                          {new Date(run.started_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                    {(run.status === "paused" || run.status === "interrupted") && run.id !== trainingId && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 gap-1 h-7 text-xs"
+                        onClick={() => {
+                          setTrainingId(run.id)
+                          setIsPaused(true)
+                          setIsPausing(false)
+                          setIsTraining(false)
+                          setProgress(run.progress)
+                          setCurrentEpoch(run.current_epoch)
+                          setTotalEpochs(run.total_epochs)
+                          setStatusLabel(run.status === "interrupted" ? "Interrupted" : "Paused")
+                          setMetrics([])
+                          setLogs([])
+                          seenLogCount.current = 0
+                          if (run.model_path) setModelPath(run.model_path)
+                        }}
+                      >
+                        <Play className="w-3 h-3" />
+                        Load &amp; Resume
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </CardContent>
+            </CollapsibleContent>
+          </Card>
+        </Collapsible>
+      )}
     </div>
   )
 }

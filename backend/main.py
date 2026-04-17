@@ -315,6 +315,7 @@ class MergeRequest(BaseModel):
 
 class TrainingConfig(BaseModel):
     dataset_id: str
+    name: str = ""  # user-supplied run name; defaults to "Run <id>" if empty
     model_type: str  # "yolo" | "segmentation" | "classification" | "rfdetr" | "rtdetr"
     model_arch: str = "yolov8n"   # e.g. yolov8n, yolo11n, yolov9c, rtdetr-l, rfdetr_base
     epochs: int = 100
@@ -2377,7 +2378,8 @@ async def start_training(config: TrainingConfig, background_tasks: BackgroundTas
             "fliplr": config.fliplr,
             "amp": config.amp,
             "dropout": config.dropout,
-        }
+        },
+        name=config.name,
     )
     
     return {"success": True, "training_id": training_id}
@@ -3390,6 +3392,7 @@ async def device_info():
 @app.get("/api/system")
 async def system_stats():
     """Return real CPU, RAM, and GPU usage stats."""
+    import asyncio
     import importlib
 
     stats: dict = {
@@ -3401,10 +3404,13 @@ async def system_stats():
     }
 
     # --- CPU / RAM via psutil (optional dependency) ---
+    # Run in executor so the interval-based measurement doesn't block the event loop
     psutil_spec = importlib.util.find_spec("psutil")
     if psutil_spec is not None:
         import psutil  # type: ignore
-        stats["cpu_percent"] = psutil.cpu_percent(interval=0.1)
+        loop = asyncio.get_event_loop()
+        cpu_pct = await loop.run_in_executor(None, lambda: psutil.cpu_percent(interval=0.5))
+        stats["cpu_percent"] = cpu_pct
         vm = psutil.virtual_memory()
         stats["ram_percent"] = vm.percent
 
