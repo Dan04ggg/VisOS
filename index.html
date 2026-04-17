@@ -647,7 +647,7 @@ h5 .cyan { color: var(--cyan); }
 .c-cm { color: var(--text3); }
 .c-key { color: var(--cyan); }
 
-.api-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; margin-top: 40px; }
+.api-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; align-items: start; margin-top: 40px; min-width: 0; }
 .api-table { width: 100%; border-collapse: collapse; }
 .api-table th {
   text-align: left; padding: 12px 16px; font-family: var(--mono);
@@ -1048,7 +1048,7 @@ footer {
   .models-cols { grid-template-columns:1fr; }
   .arch-diagram { grid-template-columns:1fr; }
   .arch-mid { display:none; }
-  .api-grid { grid-template-columns:1fr; }
+  .api-grid { grid-template-columns:1fr; min-width: 0;}
   .install-steps { grid-template-columns:1fr; }
   .trouble-grid { grid-template-columns:1fr; }
   .dup-grid { grid-template-columns:1fr 1fr; }
@@ -1177,7 +1177,7 @@ body.light .theme-toggle .icon-sun  { display: block; }
    LIGHT MODE — TOKEN OVERRIDES
 ═══════════════════════════════════════════════════ */
 body {
-  transition: background .35s ease, color .35s ease;
+  transition: background .35s ease, color .35s ease; overflow-x: hidden;
 }
 body.light {
   --bg:       #F7F7FC;
