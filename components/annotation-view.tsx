@@ -1136,7 +1136,11 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
         `${apiUrl}/api/auto-annotate/${selectedDataset.id}/single/${currentImage.id}?${params}`,
         { method: 'POST' }
       )
-      if (!resp.ok) throw new Error('Text annotation failed')
+      if (!resp.ok) {
+        let detail = 'Text annotation failed'
+        try { detail = (await resp.json()).detail ?? detail } catch {}
+        throw new Error(detail)
+      }
       const data = await resp.json()
       if (data.annotations?.length) {
         const next = [...annotations, ...data.annotations]

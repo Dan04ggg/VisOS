@@ -705,8 +705,33 @@ class ModelManager:
                 return model_info
 
         try:
-            processor = AutoProcessor.from_pretrained(hf_id)
-            model = AutoModelForZeroShotObjectDetection.from_pretrained(hf_id)
+            import os
+            # On Windows, huggingface_hub tries to create symlinks which fails without
+            # Developer Mode enabled, causing [Errno 22] Invalid argument. Fix: download
+            # to a local directory with symlinks disabled, then load from that path.
+            local_model_dir = self.models_dir / "hf_cache" / hf_id.replace("/", "--")
+            local_model_dir.mkdir(parents=True, exist_ok=True)
+            local_dir_str = str(local_model_dir)
+
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    hf_id,
+                    local_dir=local_dir_str,
+                    local_dir_use_symlinks=False,
+                )
+                load_path = local_dir_str
+            except TypeError:
+                # Older huggingface_hub without local_dir_use_symlinks — fall back to cache_dir
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            except Exception:
+                # snapshot_download failed; try loading directly (may work if already cached)
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+            processor = AutoProcessor.from_pretrained(load_path)
+            model = AutoModelForZeroShotObjectDetection.from_pretrained(load_path)
             # Store processor as attribute on model for use in _run_inference
             model._grounding_processor = processor
             try:
@@ -1009,14 +1034,15 @@ class ModelManager:
             self._try_autoload(model_id)
 
         if model_id not in self.loaded_models:
-            return []
+            raise RuntimeError(f"Model '{model_id}' is not loaded. Please load it first from the Models page.")
 
         model_info = self.loaded_models[model_id]
         model = model_info.get("model")
         model_type = model_info.get("type")
 
         if not model:
-            return []
+            load_error = model_info.get("error", "unknown error")
+            raise RuntimeError(f"Model '{model_id}' failed to load: {load_error}")
 
         dataset_path = Path(dataset_path)
 
@@ -1039,8 +1065,9 @@ class ModelManager:
                     break
 
         if not image_file:
-            return []
+            raise RuntimeError(f"Image file not found for id '{image_id}'")
 
+        import traceback
         try:
             annotations = self._run_inference(
                 model, model_type, image_file, confidence_threshold,
@@ -1049,8 +1076,9 @@ class ModelManager:
                 model_classes=model_info.get("classes") or [],
             )
             return annotations
-        except Exception:
-            return []
+        except Exception as exc:
+            traceback.print_exc()
+            raise RuntimeError(f"Inference error ({model_type}): {exc}") from exc
     
     def _run_inference(
         self,
@@ -1395,7 +1423,8 @@ class ModelManager:
                             "bbox": [xyxy[0], xyxy[1], xyxy[2] - xyxy[0], xyxy[3] - xyxy[1]],
                         })
             except Exception as e:
-                print(f"[yoloworld] inference error: {e}")
+                import traceback; traceback.print_exc()
+                raise RuntimeError(f"YOLO World inference failed: {e}") from e
 
         elif model_type == "groundingdino":
             try:
@@ -1453,7 +1482,8 @@ class ModelManager:
                             "bbox": [x1, y1, x2 - x1, y2 - y1],
                         })
             except Exception as e:
-                print(f"[groundingdino] inference error: {e}")
+                import traceback; traceback.print_exc()
+                raise RuntimeError(f"GroundingDINO inference failed: {e}") from e
 
         return annotations
 

@@ -1481,16 +1481,19 @@ async def auto_annotate_single_image(
 
     prompt_point = (point_x, point_y) if point_x is not None and point_y is not None else None
 
-    annotations = model_manager.annotate_single_image(
-        model_id,
-        dataset_path,
-        dataset["format"],
-        image_id,
-        confidence_threshold,
-        prompt_point=prompt_point,
-        text_prompt=text_prompt or None,
-        image_path_hint=image_path_hint,
-    )
+    try:
+        annotations = model_manager.annotate_single_image(
+            model_id,
+            dataset_path,
+            dataset["format"],
+            image_id,
+            confidence_threshold,
+            prompt_point=prompt_point,
+            text_prompt=text_prompt or None,
+            image_path_hint=image_path_hint,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
     return {"success": True, "annotations": annotations}
 
