@@ -624,6 +624,7 @@ h5 .cyan { color: var(--cyan); }
 
 .code-block {
   background: #060612; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  min-width: 0; /* prevent flex/grid container expansion */
 }
 .code-block-hd {
   display: flex; align-items: center; justify-content: space-between;
@@ -634,7 +635,11 @@ h5 .cyan { color: var(--cyan); }
 .code-block pre {
   padding: 20px 22px; font-family: var(--mono); font-size: 12.5px;
   line-height: 1.8; overflow-x: auto; color: var(--text2);
+  min-width: 0; /* allow shrinking inside flex/grid */
 }
+
+/* Scrollable table wrapper — keeps tables from blowing out page width */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .c-kw { color: #C678DD; }
 .c-str { color: #98C379; }
 .c-num { color: var(--gold); }
@@ -713,6 +718,9 @@ h5 .cyan { color: var(--cyan); }
   font-family: var(--mono); font-size: 11px; color: var(--cyan);
   background: rgba(0,229,255,0.05); padding: 1px 5px; border-radius: 3px;
 }
+
+/* Inline code snippets in prose — allow wrapping to prevent overflow */
+code:not(.code-inline) { word-break: break-word; overflow-wrap: break-word; }
 .security-note {
   margin-top: 40px; padding: 24px 28px;
   background: rgba(255,184,0,0.04); border: 1px solid rgba(255,184,0,0.15);
@@ -1078,6 +1086,7 @@ footer {
   overflow: hidden; 
   transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); 
   cursor: pointer; 
+  border-radius: 20px;
   background: var(--bg2); 
 }
 
@@ -1524,6 +1533,7 @@ body.light::before { opacity: 0.4; }
   <div style="margin-top:72px;" class="reveal">
     <div class="sec-tag">Annotation Tools</div>
     <h3 style="font-family:var(--head);font-size:26px;font-weight:700;letter-spacing:-0.03em;margin-bottom:8px;color:var(--text)">Six precision tools for every task</h3>
+    <div class="table-scroll">
     <table class="tools-table">
       <thead><tr><th>Tool</th><th>Shortcut</th><th>Description</th></tr></thead>
       <tbody>
@@ -1535,6 +1545,7 @@ body.light::before { opacity: 0.4; }
         <tr><td>SAM Wand</td><td><span class="kbd">auto</span></td><td>Click-based segment anything — auto-activates when a SAM model is loaded</td></tr>
       </tbody>
     </table>
+    </div>
   </div>
 
   <div style="margin-top:72px;" class="reveal">
@@ -1827,7 +1838,7 @@ body.light::before { opacity: 0.4; }
   <h2>Full REST API.<br><span class="fire">Interactive docs included.</span></h2>
   <p class="sec-intro">Base URL: <code style="font-family:var(--mono);font-size:13px;color:var(--cyan)">http://localhost:8000/api</code> &nbsp;·&nbsp; Interactive Swagger UI at <code style="font-family:var(--mono);font-size:13px;color:var(--cyan)">/docs</code></p>
   <div class="api-grid reveal-down">
-    <div>
+    <div class="table-scroll">
       <table class="api-table">
         <thead><tr><th>Resource</th><th>Endpoints</th></tr></thead>
         <tbody>
