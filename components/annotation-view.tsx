@@ -22,7 +22,7 @@ const PRELOAD_AHEAD = 3
 
 interface BatchJobState {
   job_id: string
-  status: 'running' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted'
+  status: 'running' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted' | 'undone'
   paused: boolean
   progress: number
   total: number
@@ -32,9 +32,11 @@ interface BatchJobState {
   total_annotations: number
   error?: string
   text_prompt: string
-  started_at: string | number  // ISO string from backend or Date.now() ms
+  model_id?: string
+  confidence_threshold?: number
+  started_at: string | number
   dataset_id: string
-  recent_images?: Array<{ filename: string; path: string; annotation_count: number }>
+  recent_images?: Array<{ filename: string; path: string; image_id: string; annotation_count: number }>
 }
 
 interface AnnotationViewProps {
@@ -362,6 +364,24 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   }
 
   /**
+   * Fetch a fresh image list then navigate to a specific image by stem id.
+   * Used by batch-job thumbnail clicks and "View Annotations" buttons.
+   */
+  const navigateToAnnotatedImage = async (imageId: string) => {
+    if (!selectedDataset) return
+    try {
+      const resp = await fetch(`${apiUrl}/api/datasets/${selectedDataset.id}/images?limit=999999&bust_cache=true`)
+      if (!resp.ok) return
+      const data = await resp.json()
+      const images: ImageData[] = data.images || []
+      updateImageCache(selectedDataset.id, images)
+      // Set target before initFromImages so the allImages useEffect navigates there
+      initialImageIdRef.current = imageId
+      setAllImages(images)
+    } catch {}
+  }
+
+  /**
    * Refresh the image list and cache WITHOUT resetting the current canvas view.
    * Used by batch-job polling so annotations from the job become visible
    * in the list/gallery without kicking the user back to image #0.
@@ -379,11 +399,11 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
       // Set flag BEFORE setAllImages so the useEffect sees it synchronously
       silentRefreshRef.current = true
       setAllImages(images)
-      // If the current image has new annotations from the batch job, show them
+      // Sync current image annotations if they differ from what's on canvas
       const img = currentImageRef.current
       if (img) {
         const updated = images.find(i => i.id === img.id)
-        if (updated && (updated.annotations?.length ?? 0) > annotationsRef.current.length) {
+        if (updated && (updated.annotations?.length ?? 0) !== annotationsRef.current.length) {
           setAnnotations(updated.annotations || [])
         }
       }
@@ -1224,6 +1244,16 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     } catch { toast.error('Failed to cancel job') }
   }
 
+  const undoJob = async (job_id: string) => {
+    try {
+      const resp = await fetch(`${apiUrl}/api/auto-annotate/text-batch/${job_id}/undo`, { method: 'POST' })
+      if (!resp.ok) throw new Error((await resp.json()).detail ?? 'Undo failed')
+      setBatchJobs(prev => ({ ...prev, [job_id]: { ...prev[job_id], status: 'undone' } }))
+      await refreshImageListSilent()
+      toast.success('Batch annotations undone — dataset restored to pre-job state')
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Undo failed') }
+  }
+
   // ── Keyboard shortcuts ───────────────────────────────────────────────────────
   useEffect(() => {
     const onKey = async (e: KeyboardEvent) => {
@@ -1329,8 +1359,9 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     return `${m}m ${s % 60}s`
   }
 
-  const runningJobCount = Object.values(batchJobs).filter(j => j.status === 'running' || j.status === 'paused').length
-  const totalJobCount = Object.keys(batchJobs).length
+  const datasetJobs = Object.values(batchJobs).filter(j => !selectedDataset || j.dataset_id === selectedDataset.id)
+  const runningJobCount = datasetJobs.filter(j => j.status === 'running' || j.status === 'paused').length
+  const totalJobCount = datasetJobs.length
 
   // ── Main UI ──────────────────────────────────────────────────────────────────
   return (
@@ -1754,7 +1785,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
         {/* Text prompt section — shown for SAM3, YOLO-World, and GroundingDINO */}
         {(() => {
           const selModel = models.find(m => m.id === selectedModel)
-          const isTextModel = selModel && ['sam3', 'yoloworld', 'groundingdino'].includes(selModel.type)
+          const isTextModel = selModel && ['sam3', 'yoloworld', 'groundingdino', 'owlvit'].includes(selModel.type)
           if (!isTextModel) return null
           const sectionLabel = selModel.type === 'sam3' ? 'Text Segment' : 'Text Detect (Zero-Shot)'
           return (
@@ -1964,8 +1995,8 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
                     </span>
                   )}
                 </div>
-                {Object.values(batchJobs).slice().reverse().map(job => {
-                  const processed = job.processed ?? (job.annotated + job.failed)
+                {datasetJobs.slice().reverse().map(job => {
+                  const processed = job.processed ?? 0
                   const isActive = job.status === 'running' || job.status === 'paused'
                   const isRunning = job.status === 'running'
                   return (
@@ -1996,8 +2027,8 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
                           job.status === 'paused'        && 'bg-warning/10 text-warning',
                           job.status === 'done'          && 'bg-success/10 text-success',
                           job.status === 'error'         && 'bg-destructive/10 text-destructive',
-                          job.status === 'cancelled'     && 'bg-muted text-muted-foreground',
-                          job.status === 'interrupted'   && 'bg-muted text-muted-foreground',
+                          job.status === 'undone'        && 'bg-muted text-muted-foreground',
+                          (job.status === 'cancelled' || job.status === 'interrupted') && 'bg-muted text-muted-foreground',
                         )}>
                           {isRunning && <span className="live-dot" />}
                           {job.status}
@@ -2048,22 +2079,46 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
                         {/* Recent images preview */}
                         {(job.recent_images?.length ?? 0) > 0 && (
                           <div className="pt-1 border-t border-border/60">
-                            <p className="text-[8px] font-mono text-muted-foreground/40 uppercase tracking-wider mb-1.5">
-                              Recent · {job.recent_images!.length} annotated
-                            </p>
+                            <div className="flex items-center justify-between mb-1.5">
+                              <p className="text-[8px] font-mono text-muted-foreground/40 uppercase tracking-wider">
+                                Recent · {job.recent_images!.length} annotated
+                              </p>
+                              {job.status === 'done' && job.dataset_id === selectedDataset?.id && (
+                                <button
+                                  onClick={() => {
+                                    const first = job.recent_images![job.recent_images!.length - 1]
+                                    if (first) navigateToAnnotatedImage(first.image_id)
+                                  }}
+                                  className="text-[8px] font-mono text-primary hover:underline"
+                                >
+                                  View Annotations →
+                                </button>
+                              )}
+                              {job.status === 'done' && job.dataset_id !== selectedDataset?.id && (
+                                <span className="text-[8px] font-mono text-muted-foreground/40">
+                                  Switch to dataset to view
+                                </span>
+                              )}
+                            </div>
                             <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-thin">
                               {job.recent_images!.slice().reverse().map((img, idx) => (
-                                <div key={idx} className="shrink-0 relative group">
+                                <button
+                                  key={idx}
+                                  className="shrink-0 relative group cursor-pointer"
+                                  disabled={job.dataset_id !== selectedDataset?.id}
+                                  onClick={() => navigateToAnnotatedImage(img.image_id)}
+                                  title={`${img.filename} · ${img.annotation_count} annotations`}
+                                >
                                   <img
                                     src={`${apiUrl}/api/auto-annotate/text-batch/${job.job_id}/preview/${job.recent_images!.length - 1 - idx}`}
                                     alt={img.filename}
-                                    className="w-14 h-14 object-cover rounded border border-border"
+                                    className="w-14 h-14 object-cover rounded border border-border group-hover:border-primary/50 transition-colors"
                                     loading="lazy"
                                   />
                                   <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-[7px] text-white font-mono text-center py-0.5 rounded-b opacity-0 group-hover:opacity-100 transition-opacity">
                                     {img.annotation_count} ann
                                   </div>
-                                </div>
+                                </button>
                               ))}
                             </div>
                           </div>
@@ -2086,6 +2141,19 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
                             <button onClick={() => cancelJob(job.job_id)}
                               className="flex items-center gap-1 text-[9px] font-mono px-2 py-1 rounded border border-destructive/20 bg-destructive/5 text-destructive hover:bg-destructive/10 transition-colors">
                               <StopCircle className="w-2 h-2" strokeWidth={2} /> Cancel
+                            </button>
+                          </div>
+                        )}
+
+                        {job.status === 'done' && (
+                          <div className="flex items-center gap-1.5 pt-0.5 border-t border-border/60">
+                            <button
+                              onClick={() => undoJob(job.job_id)}
+                              disabled={job.dataset_id !== selectedDataset?.id}
+                              className="flex items-center gap-1 text-[9px] font-mono px-2 py-1 rounded border border-destructive/20 bg-destructive/5 text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                              title={job.dataset_id !== selectedDataset?.id ? 'Switch to this dataset to undo' : 'Remove all annotations this job created'}
+                            >
+                              ↩ Undo Batch
                             </button>
                           </div>
                         )}

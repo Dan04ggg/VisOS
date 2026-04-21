@@ -132,7 +132,7 @@ export function DatasetsView({
       const response = await fetch(`${apiUrl}/api/datasets/load-local`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path, format_hint: formatHint })
+        body: JSON.stringify({ folder_path: path, format_hint: formatHint })
       })
       
       if (!response.ok) {
@@ -201,6 +201,10 @@ export function DatasetsView({
 
     const formData = new FormData()
     files.forEach(file => formData.append('files', file))
+    // Derive a friendly name from the first file (strip .zip extension)
+    const firstName = files[0]?.name ?? ''
+    const derivedName = firstName.replace(/\.zip$/i, '').replace(/\.[^.]+$/, '') || firstName
+    if (derivedName) formData.append('dataset_name', derivedName)
 
     const xhr = new XMLHttpRequest()
 

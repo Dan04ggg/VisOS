@@ -28,6 +28,10 @@ class AnnotationManager:
         """Update annotations for a specific image"""
         dataset_path = Path(dataset_path)
         
+        # generic-images (raw upload) is promoted to YOLO on first annotation save
+        if format_name == "generic-images":
+            format_name = "yolo"
+
         updaters = {
             "yolo": self._update_yolo_annotations,
             "yolov5": self._update_yolo_annotations,
@@ -41,7 +45,7 @@ class AnnotationManager:
             "voc": self._update_voc_annotations,
             "labelme": self._update_labelme_annotations,
         }
-        
+
         updater = updaters.get(format_name)
         if updater:
             updater(dataset_path, image_id, annotations)
@@ -84,11 +88,15 @@ class AnnotationManager:
         with Image.open(image_file) as img:
             width, height = img.size
 
-        # Label file lives beside the image but in a sibling "labels" folder
-        # e.g. root/train/images/foo.jpg  →  root/train/labels/foo.txt
+        # Label file lives in a sibling "labels" folder.
+        # e.g. root/train/images/foo.jpg → root/train/labels/foo.txt
+        # e.g. root/foo.jpg (flat)       → root/labels/foo.txt
         img_parent = image_file.parent
-        if img_parent.name == "images":
+        if img_parent.name.lower() in ("images", "imgs"):
             label_dir = img_parent.parent / "labels"
+        elif img_parent.resolve() == root.resolve():
+            # Images are directly in the dataset root — put labels/ inside root
+            label_dir = root / "labels"
         else:
             label_dir = img_parent.parent / "labels"
         label_dir.mkdir(parents=True, exist_ok=True)

@@ -76,6 +76,19 @@ def _save_dataset_metadata(dataset_id: str, info: dict):
         logger.warning("Could not save metadata for dataset %s: %s", dataset_id, exc)
 
 
+def _make_dataset_folder(name: str) -> tuple[str, "Path"]:
+    """Return (folder_name, full_path) using the dataset name instead of a UUID.
+    Sanitizes the name and appends _2, _3 … to avoid collisions."""
+    import re
+    safe = re.sub(r'[^\w\-.]', '_', name).strip('_') or "dataset"
+    candidate = safe
+    counter = 2
+    while (DATASETS_DIR / candidate).exists():
+        candidate = f"{safe}_{counter}"
+        counter += 1
+    return candidate, DATASETS_DIR / candidate
+
+
 def _restore_datasets():
     """
     On startup: scan workspace/datasets/ for any folder that has a
@@ -429,30 +442,30 @@ async def load_dataset(
     format_hint: str = None
 ):
     """Load a dataset from uploaded files (supports zip, folders, or individual files)"""
-    dataset_id = str(uuid.uuid4())
-    dataset_path = DATASETS_DIR / dataset_id
+    resolved_name = dataset_name or (files[0].filename.rsplit('.', 1)[0] if files else "dataset")
+    dataset_id, dataset_path = _make_dataset_folder(resolved_name)
     dataset_path.mkdir(parents=True, exist_ok=True)
-    
+
     try:
         # Save uploaded files
         for file in files:
             file_path = dataset_path / file.filename
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            
+
             content = await file.read()
             with open(file_path, "wb") as f:
                 f.write(content)
-            
+
             # Extract if zip
             if file.filename.endswith(".zip"):
                 shutil.unpack_archive(file_path, dataset_path)
                 os.remove(file_path)
-        
+
         # Parse dataset
         dataset_info = dataset_parser.parse_dataset(
-            dataset_path, 
+            dataset_path,
             format_hint=format_hint,
-            name=dataset_name or f"Dataset_{dataset_id[:8]}"
+            name=dataset_id
         )
         
         dataset_info["id"] = dataset_id
@@ -598,9 +611,9 @@ async def split_dataset(dataset_id: str, request: SplitRequest):
     dataset_path = DATASETS_DIR / dataset_id
     
     # Create new dataset with splits
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    output_name = request.output_name or f"{dataset['name']}_split"
+    new_dataset_id, output_path = _make_dataset_folder(output_name)
+
     split_result = dataset_parser.create_split_dataset(
         dataset_path,
         output_path,
@@ -611,9 +624,8 @@ async def split_dataset(dataset_id: str, request: SplitRequest):
         shuffle=request.shuffle,
         seed=request.seed
     )
-    
+
     # Parse new dataset
-    output_name = request.output_name or f"{dataset['name']}_split"
     new_info = dataset_parser.parse_dataset(output_path, dataset["format"], output_name)
     new_info["id"] = new_dataset_id
     new_info["splits"] = split_result["splits"]
@@ -643,8 +655,7 @@ async def extract_classes_to_new_dataset(dataset_id: str, request: ClassExtractR
     source_format = dataset["format"]
 
     # Create new dataset directory
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
+    new_dataset_id, output_path = _make_dataset_folder(request.output_name or f"{dataset['name']}_extracted")
 
     extraction_result = annotation_manager.extract_classes(
         dataset_path,
@@ -966,9 +977,8 @@ async def augment_dataset(dataset_id: str, config: AugmentationConfig, backgroun
     dataset_path = DATASETS_DIR / dataset_id
     
     # Create new augmented dataset
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    new_dataset_id, output_path = _make_dataset_folder(config.output_name or f"{dataset['name']}_augmented")
+
     augmentation_result = annotation_manager.augment_dataset(
         dataset_path,
         output_path,
@@ -976,9 +986,9 @@ async def augment_dataset(dataset_id: str, config: AugmentationConfig, backgroun
         config.target_size,
         config.augmentations
     )
-    
+
     # Parse new dataset
-    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], config.output_name)
+    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], new_dataset_id)
     new_info["id"] = new_dataset_id
     active_datasets[new_dataset_id] = new_info
     
@@ -1200,24 +1210,24 @@ async def finalize_sorting(session_id: str, create_new_dataset: bool = True):
     
     if create_new_dataset:
         # Create new dataset with only kept images
-        new_dataset_id = str(uuid.uuid4())
-        new_dataset_path = DATASETS_DIR / new_dataset_id
-        
+        filter_name = f"{active_datasets[dataset_id]['name']}_filtered"
+        new_dataset_id, new_dataset_path = _make_dataset_folder(filter_name)
+
         original_path = DATASETS_DIR / dataset_id
         original_format = active_datasets[dataset_id]["format"]
-        
+
         dataset_parser.create_filtered_dataset(
             original_path,
             new_dataset_path,
             session["kept"],
             original_format
         )
-        
+
         # Parse new dataset
         new_info = dataset_parser.parse_dataset(
             new_dataset_path,
             format_hint=original_format,
-            name=f"{active_datasets[dataset_id]['name']}_filtered"
+            name=new_dataset_id
         )
         new_info["id"] = new_dataset_id
         active_datasets[new_dataset_id] = new_info
@@ -1304,7 +1314,19 @@ async def update_annotations(dataset_id: str, image_id: str, update: AnnotationU
     
     dataset = active_datasets[dataset_id]
     dataset_path = DATASETS_DIR / dataset_id
-    
+
+    # Promote generic-images datasets to YOLO on first annotation save
+    if dataset.get("format") == "generic-images":
+        dataset["format"] = "yolo"
+        meta_path = dataset_path / "dataset_metadata.json"
+        try:
+            import json as _json2
+            meta = _json2.loads(meta_path.read_text()) if meta_path.exists() else {}
+            meta["format"] = "yolo"
+            meta_path.write_text(_json2.dumps(meta, indent=2))
+        except Exception:
+            pass
+
     annotation_manager.update_annotations(
         dataset_path,
         dataset["format"],
@@ -1574,20 +1596,60 @@ async def auto_annotate_text_batch(
         "started_at": datetime.utcnow().isoformat(),
         "recent_images": [],     # last 10 processed images for live preview
         "all_images": [],        # all processed images with annotations
+        "snapshot": None,        # pre-batch annotation snapshot for undo
     }
     _job_controls[job_id] = {"pause": pause_ev, "stop": stop_ev}
     _persist_jobs()
 
     def _run_batch(job_id: str):
         try:
-            # Collect all images in the dataset
+            # ── Snapshot current annotations so the job can be undone ────────────
+            _snap: dict = {"yaml": {}, "labels": {}, "metadata": None}
+            for _yf in list(dataset_path.glob("*.yaml")) + list(dataset_path.glob("*.yml")):
+                try:
+                    _snap["yaml"][_yf.name] = _yf.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+            _labels_dir = dataset_path / "labels"
+            if _labels_dir.exists():
+                for _lf in _labels_dir.rglob("*.txt"):
+                    try:
+                        _snap["labels"][str(_lf.relative_to(dataset_path))] = _lf.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
+            _meta_path = dataset_path / "dataset_metadata.json"
+            if _meta_path.exists():
+                try:
+                    _snap["metadata"] = _meta_path.read_text(encoding="utf-8")
+                except Exception:
+                    pass
+            _text_annotate_jobs[job_id]["snapshot"] = _snap
+
+            # Promote generic-images datasets to YOLO so annotations can be saved and read back
+            if dataset.get("format") == "generic-images":
+                dataset["format"] = "yolo"
+                meta_path = dataset_path / "dataset_metadata.json"
+                try:
+                    import json as _json
+                    meta = _json.loads(meta_path.read_text()) if meta_path.exists() else {}
+                    meta["format"] = "yolo"
+                    meta_path.write_text(_json.dumps(meta, indent=2))
+                except Exception as _me:
+                    print(f"[batch:{job_id}] failed to persist format upgrade: {_me}")
+
+            # Collect all images in the dataset (deduplicate — on Windows both
+            # *.jpg and *.JPG globs match the same file, doubling the count)
             IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
-            image_files = []
+            _seen_paths: set = set()
+            image_files: list = []
             for ext in IMAGE_EXTENSIONS:
-                image_files.extend(dataset_path.rglob(f"*{ext}"))
-                image_files.extend(dataset_path.rglob(f"*{ext.upper()}"))
-            # Exclude images inside workspace/models or similar non-dataset dirs
-            image_files = [f for f in image_files if "labels" not in f.parts]
+                for _f in list(dataset_path.rglob(f"*{ext}")) + list(dataset_path.rglob(f"*{ext.upper()}")):
+                    if "labels" in _f.parts:
+                        continue
+                    _rp = _f.resolve()
+                    if _rp not in _seen_paths:
+                        _seen_paths.add(_rp)
+                        image_files.append(_f)
 
             _text_annotate_jobs[job_id]["total"] = len(image_files)
             classes = model_manager._get_dataset_classes(dataset_path, dataset["format"])
@@ -1635,7 +1697,6 @@ async def auto_annotate_text_batch(
                         )
                         _text_annotate_jobs[job_id]["annotated"] += 1
                         _text_annotate_jobs[job_id]["total_annotations"] += len(annotations)
-                        # Track recent images for live preview in the UI
                         try:
                             rel_path = str(image_file.relative_to(dataset_path))
                         except Exception:
@@ -1650,22 +1711,18 @@ async def auto_annotate_text_batch(
                         recent = _text_annotate_jobs[job_id].get("recent_images", [])
                         recent.append(img_entry)
                         _text_annotate_jobs[job_id]["recent_images"] = recent[-10:]
-                        # Track ALL processed images with annotations
                         all_imgs = _text_annotate_jobs[job_id].get("all_images", [])
                         all_imgs.append(img_entry)
                         _text_annotate_jobs[job_id]["all_images"] = all_imgs
-                        # Keep image list cache fresh so live polling returns new annotations
                         _images_cache.pop(dataset_id, None)
                     except Exception as exc:
                         print(f"[batch:{job_id}] save failed on {image_file.name}: {exc}")
                         _text_annotate_jobs[job_id]["failed"] += 1
                 _text_annotate_jobs[job_id]["processed"] = i + 1
                 _text_annotate_jobs[job_id]["progress"] = int((i + 1) / max(len(image_files), 1) * 100)
-                # Persist state every 5 images
                 if i % 5 == 4:
                     _persist_jobs()
 
-            # Refresh cache
             _images_cache.pop(dataset_id, None)
             _text_annotate_jobs[job_id]["status"] = "done"
             _persist_jobs()
@@ -1740,6 +1797,71 @@ async def cancel_text_batch(job_id: str):
     return {"status": "cancelled"}
 
 
+@app.post("/api/auto-annotate/text-batch/{job_id}/undo")
+async def undo_text_batch(job_id: str):
+    """Restore the dataset to its pre-batch state by replaying the saved snapshot."""
+    if job_id not in _text_annotate_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job = _text_annotate_jobs[job_id]
+    if job["status"] not in ("done", "cancelled", "error", "interrupted"):
+        raise HTTPException(status_code=400, detail="Job must be finished to undo")
+
+    snapshot = job.get("snapshot")
+    if not snapshot:
+        raise HTTPException(status_code=400, detail="No snapshot available — cannot undo this job")
+
+    dataset_id = job["dataset_id"]
+    if dataset_id not in active_datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    dataset_path = DATASETS_DIR / dataset_id
+
+    # 1. Delete ALL current label files created or modified by the batch
+    labels_dir = dataset_path / "labels"
+    if labels_dir.exists():
+        for lf in labels_dir.rglob("*.txt"):
+            try:
+                lf.unlink()
+            except Exception:
+                pass
+
+    # 2. Restore pre-batch label files from snapshot
+    for rel_path, content in snapshot.get("labels", {}).items():
+        restore_path = dataset_path / rel_path
+        restore_path.parent.mkdir(parents=True, exist_ok=True)
+        restore_path.write_text(content, encoding="utf-8")
+
+    # 3. Restore or delete yaml files
+    current_yamls = set(yf.name for yf in list(dataset_path.glob("*.yaml")) + list(dataset_path.glob("*.yml")))
+    snap_yamls = snapshot.get("yaml", {})
+    for filename, content in snap_yamls.items():
+        (dataset_path / filename).write_text(content, encoding="utf-8")
+    # Delete any yaml that the batch created (wasn't in the snapshot)
+    for yaml_name in current_yamls - set(snap_yamls.keys()):
+        try:
+            (dataset_path / yaml_name).unlink()
+        except Exception:
+            pass
+
+    # 4. Restore dataset metadata (reverts format promotion generic-images → yolo)
+    meta_content = snapshot.get("metadata")
+    meta_path = dataset_path / "dataset_metadata.json"
+    if meta_content:
+        meta_path.write_text(meta_content, encoding="utf-8")
+        try:
+            import json as _jj
+            restored_meta = _jj.loads(meta_content)
+            active_datasets[dataset_id] = {**active_datasets[dataset_id], "format": restored_meta.get("format", active_datasets[dataset_id]["format"])}
+        except Exception:
+            pass
+
+    _images_cache.pop(dataset_id, None)
+    job["status"] = "undone"
+    job["snapshot"] = None   # free memory after successful undo
+    _persist_jobs()
+    return {"status": "undone"}
+
+
 @app.get("/api/auto-annotate/jobs")
 async def list_batch_jobs():
     """Return all known batch jobs (for frontend state restoration)."""
@@ -1797,11 +1919,16 @@ async def restart_text_batch(job_id: str):
     def _continue_batch(job_id: str):
         try:
             IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
-            image_files = []
+            _seen_paths2: set = set()
+            image_files: list = []
             for ext in IMAGE_EXTENSIONS:
-                image_files.extend(dataset_path.rglob(f"*{ext}"))
-                image_files.extend(dataset_path.rglob(f"*{ext.upper()}"))
-            image_files = [f for f in image_files if "labels" not in f.parts]
+                for _f in list(dataset_path.rglob(f"*{ext}")) + list(dataset_path.rglob(f"*{ext.upper()}")):
+                    if "labels" in _f.parts:
+                        continue
+                    _rp = _f.resolve()
+                    if _rp not in _seen_paths2:
+                        _seen_paths2.add(_rp)
+                        image_files.append(_f)
 
             all_count = len(image_files)
             remaining = [f for f in image_files if f.stem not in already_done]
@@ -2148,9 +2275,9 @@ async def convert_dataset(request: ConversionRequest):
     target_format = format_map.get(request.target_format, request.target_format)
     
     # Create new dataset for converted version
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    output_name = request.output_name or f"{dataset['name']}_{request.target_format}"
+    new_dataset_id, output_path = _make_dataset_folder(output_name)
+
     try:
         format_converter.convert(
             source_path,
@@ -2161,10 +2288,9 @@ async def convert_dataset(request: ConversionRequest):
     except Exception as e:
         shutil.rmtree(output_path, ignore_errors=True)
         raise HTTPException(status_code=400, detail=f"Conversion failed: {str(e)}")
-    
+
     # Parse new dataset
-    output_name = request.output_name or f"{dataset['name']}_{request.target_format}"
-    new_info = dataset_parser.parse_dataset(output_path, target_format, output_name)
+    new_info = dataset_parser.parse_dataset(output_path, target_format, new_dataset_id)
     new_info["id"] = new_dataset_id
     new_info["format"] = request.target_format  # Keep original format name for display
     active_datasets[new_dataset_id] = new_info
@@ -2220,18 +2346,17 @@ async def merge_datasets(request: MergeRequest):
     ]
     
     # Create merged dataset
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    new_dataset_id, output_path = _make_dataset_folder(request.output_name or "merged_dataset")
+
     dataset_merger.merge(
-        datasets, 
-        output_path, 
+        datasets,
+        output_path,
         request.output_format,
         class_mapping=request.class_mapping
     )
-    
+
     # Parse merged dataset
-    new_info = dataset_parser.parse_dataset(output_path, request.output_format, request.output_name)
+    new_info = dataset_parser.parse_dataset(output_path, request.output_format, new_dataset_id)
     new_info["id"] = new_dataset_id
     active_datasets[new_dataset_id] = new_info
     
@@ -2515,26 +2640,23 @@ async def load_local_dataset(request: LocalFolderRequest):
     if not folder_path.is_dir():
         raise HTTPException(status_code=400, detail="Path is not a directory")
     
-    dataset_id = str(uuid.uuid4())
-    
-    # Create symlink or copy based on preference
-    dataset_link = DATASETS_DIR / dataset_id
-    
+    dataset_id, dataset_link = _make_dataset_folder(request.dataset_name or folder_path.name)
+
     try:
-        # Create symlink to avoid copying large datasets
+        # Create symlink or copy based on preference
         dataset_link.symlink_to(folder_path.absolute())
     except OSError:
         # If symlink fails (e.g., on Windows), copy the dataset
         shutil.copytree(folder_path, dataset_link)
-    
+
     try:
         # Parse dataset
         dataset_info = dataset_parser.parse_dataset(
             dataset_link,
             format_hint=request.format_hint,
-            name=request.dataset_name or folder_path.name
+            name=dataset_id
         )
-        
+
         dataset_info["id"] = dataset_id
         dataset_info["local_path"] = str(folder_path.absolute())
         dataset_info["is_local"] = True
@@ -2690,8 +2812,8 @@ async def extract_video_frames(request: VideoExtractRequest):
         nth_frame = request.frame_interval
     
     # Create new dataset
-    dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / dataset_id / "images"
+    dataset_id, _dataset_dir = _make_dataset_folder(request.output_name or "video_frames")
+    output_path = _dataset_dir / "images"
     output_path.mkdir(parents=True, exist_ok=True)
     
     # Only cap frames for uniform mode; interval/keyframes/manual should extract all matching frames
@@ -2983,8 +3105,7 @@ async def simple_augment(request: SimpleAugmentRequest):
         raise HTTPException(status_code=400, detail="No augmentations enabled")
 
     output_name = request.output_name or f"{dataset['name']}_augmented"
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
+    new_dataset_id, output_path = _make_dataset_folder(output_name)
 
     # Class-targeted augmentation: if class_targets provided, adjust per-class
     # For now we run global augmentation; class_targets are noted for future per-class logic
@@ -3046,9 +3167,8 @@ async def augment_dataset_enhanced(dataset_id: str, request: EnhancedAugmentatio
         target_size = int(dataset["num_images"] * request.target_multiplier)
     
     # Create new augmented dataset
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    new_dataset_id, output_path = _make_dataset_folder(request.output_name or f"{dataset['name']}_augmented")
+
     result = augmenter.augment_dataset(
         dataset_path,
         output_path,
@@ -3057,13 +3177,13 @@ async def augment_dataset_enhanced(dataset_id: str, request: EnhancedAugmentatio
         request.augmentations,
         request.preserve_originals
     )
-    
+
     if not result["success"]:
         shutil.rmtree(output_path, ignore_errors=True)
         raise HTTPException(status_code=400, detail=result.get("error", "Augmentation failed"))
-    
+
     # Parse new dataset
-    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], request.output_name)
+    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], new_dataset_id)
     new_info["id"] = new_dataset_id
     active_datasets[new_dataset_id] = new_info
     
@@ -3104,9 +3224,9 @@ async def split_dataset_enhanced(dataset_id: str, request: EnhancedSplitRequest)
     dataset_path = DATASETS_DIR / dataset_id
     
     # Create new dataset with splits
-    new_dataset_id = str(uuid.uuid4())
-    output_path = DATASETS_DIR / new_dataset_id
-    
+    output_name = request.output_name or f"{dataset['name']}_split"
+    new_dataset_id, output_path = _make_dataset_folder(output_name)
+
     split_result = dataset_parser.create_split_dataset(
         dataset_path,
         output_path,
@@ -3118,10 +3238,9 @@ async def split_dataset_enhanced(dataset_id: str, request: EnhancedSplitRequest)
         seed=request.seed,
         stratified=request.stratified
     )
-    
+
     # Parse new dataset
-    output_name = request.output_name or f"{dataset['name']}_split"
-    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], output_name)
+    new_info = dataset_parser.parse_dataset(output_path, dataset["format"], new_dataset_id)
     new_info["id"] = new_dataset_id
     new_info["splits"] = split_result["splits"]
     active_datasets[new_dataset_id] = new_info

@@ -106,6 +106,10 @@ class ModelManager:
         {"id": "yoloworld_l", "name": "YOLO-World L (zero-shot)", "type": "yoloworld", "pretrained": True},
         {"id": "groundingdino_t", "name": "GroundingDINO Tiny (zero-shot)", "type": "groundingdino", "pretrained": True},
         {"id": "groundingdino_b", "name": "GroundingDINO Base (zero-shot)", "type": "groundingdino", "pretrained": True},
+        # OWL-ViT — open-vocabulary detection via image-text matching
+        {"id": "owlvit_base_patch32", "name": "OWL-ViT Base (Patch32) (zero-shot)", "type": "owlvit", "pretrained": True},
+        {"id": "owlvit_base_patch16", "name": "OWL-ViT Base (Patch16) (zero-shot)", "type": "owlvit", "pretrained": True},
+        {"id": "owlvit_large_patch14", "name": "OWL-ViT Large (Patch14) (zero-shot)", "type": "owlvit", "pretrained": True},
     ]
 
     def list_models(self) -> List[Dict[str, Any]]:
@@ -166,28 +170,36 @@ class ModelManager:
                 "path": str(model_file),
             })
 
-        # 2b. GroundingDINO models cached in the HuggingFace hub cache
+        # 2b. HuggingFace-cached models (GroundingDINO, OWL-ViT)
         #     (these are never stored as .pt files in models_dir, so the disk
         #     scan above misses them entirely)
         try:
             from huggingface_hub import scan_cache_info
             cached_repos = {repo.repo_id for repo in scan_cache_info().repos}
-            for model_id, hf_id in self._GROUNDINGDINO_HF_IDS.items():
-                if model_id in seen_ids:
-                    continue
-                if hf_id in cached_repos:
-                    catalog = next(
-                        (e for e in self._PRETRAINED_CATALOG if e["id"] == model_id), None
-                    )
-                    seen_ids.add(model_id)
-                    models.append({
-                        "id": model_id,
-                        "name": catalog["name"] if catalog else model_id,
-                        "type": "groundingdino",
-                        "loaded": False,
-                        "pretrained": True,
-                        "downloaded": True,
-                    })
+            _hf_model_maps = [
+                (self._GROUNDINGDINO_HF_IDS, "groundingdino"),
+                (self._OWLVIT_HF_IDS, "owlvit"),
+            ]
+            for hf_ids_dict, mtype in _hf_model_maps:
+                for model_id, hf_id in hf_ids_dict.items():
+                    if model_id in seen_ids:
+                        continue
+                    # Also check local hf_cache directory used by snapshot_download
+                    local_cache = self.models_dir / "hf_cache" / hf_id.replace("/", "--")
+                    is_local = local_cache.exists() and any(local_cache.iterdir())
+                    if hf_id in cached_repos or is_local:
+                        catalog = next(
+                            (e for e in self._PRETRAINED_CATALOG if e["id"] == model_id), None
+                        )
+                        seen_ids.add(model_id)
+                        models.append({
+                            "id": model_id,
+                            "name": catalog["name"] if catalog else model_id,
+                            "type": mtype,
+                            "loaded": False,
+                            "pretrained": True,
+                            "downloaded": True,
+                        })
         except Exception:
             pass
 
@@ -280,6 +292,8 @@ class ModelManager:
                 model_info = self._load_pretrained_yoloworld(model_name, model_info)
             elif model_type == "groundingdino":
                 model_info = self._load_pretrained_groundingdino(model_name, model_info)
+            elif model_type == "owlvit":
+                model_info = self._load_pretrained_owlvit(model_name, model_info)
         except Exception as e:
             model_info["error"] = str(e)
         self.loaded_models[model_id] = model_info
@@ -375,6 +389,13 @@ class ModelManager:
     _GROUNDINGDINO_HF_IDS = {
         "groundingdino_t": "IDEA-Research/grounding-dino-tiny",
         "groundingdino_b": "IDEA-Research/grounding-dino-base",
+    }
+
+    # OWL-ViT HuggingFace model IDs
+    _OWLVIT_HF_IDS = {
+        "owlvit_base_patch32":  "google/owlvit-base-patch32",
+        "owlvit_base_patch16":  "google/owlvit-base-patch16",
+        "owlvit_large_patch14": "google/owlvit-large-patch14",
     }
 
     def _load_pretrained_yolo(self, model_name: str, model_info: Dict, _status_hook=None) -> Dict:
@@ -734,6 +755,75 @@ class ModelManager:
             model = AutoModelForZeroShotObjectDetection.from_pretrained(load_path)
             # Store processor as attribute on model for use in _run_inference
             model._grounding_processor = processor
+            try:
+                import torch
+                device = self._get_device()
+                if device != "cpu":
+                    model = model.to(f"cuda:{device}" if isinstance(device, int) else device)
+            except Exception:
+                pass
+            model_info["model"] = model
+            model_info["classes"] = []  # zero-shot
+            model_info["loaded"] = True
+        except Exception as e:
+            model_info["error"] = str(e)
+            model_info["loaded"] = False
+        return model_info
+
+    def _load_pretrained_owlvit(self, model_name: str, model_info: Dict) -> Dict:
+        """Load OWL-ViT via HuggingFace transformers (zero-shot text-grounded detection)."""
+        import sys, subprocess
+        try:
+            from training import _VENV_SYSPATH
+            for p in _VENV_SYSPATH:
+                if p not in sys.path:
+                    sys.path.insert(0, p)
+        except ImportError:
+            pass
+
+        hf_id = self._OWLVIT_HF_IDS.get(model_name)
+        if hf_id is None:
+            model_info["error"] = f"Unknown OWL-ViT model: {model_name}"
+            model_info["loaded"] = False
+            return model_info
+
+        try:
+            from transformers import OwlViTProcessor, OwlViTForObjectDetection
+        except ImportError:
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "transformers", "-q"], timeout=300
+                )
+                from transformers import OwlViTProcessor, OwlViTForObjectDetection
+            except Exception as e:
+                model_info["error"] = f"Failed to install transformers: {e}"
+                model_info["loaded"] = False
+                return model_info
+
+        try:
+            import os
+            local_model_dir = self.models_dir / "hf_cache" / hf_id.replace("/", "--")
+            local_model_dir.mkdir(parents=True, exist_ok=True)
+            local_dir_str = str(local_model_dir)
+
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(
+                    hf_id,
+                    local_dir=local_dir_str,
+                    local_dir_use_symlinks=False,
+                )
+                load_path = local_dir_str
+            except TypeError:
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            except Exception:
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+            processor = OwlViTProcessor.from_pretrained(load_path)
+            model = OwlViTForObjectDetection.from_pretrained(load_path)
+            model._owlvit_processor = processor
             try:
                 import torch
                 device = self._get_device()
@@ -1485,6 +1575,50 @@ class ModelManager:
                 import traceback; traceback.print_exc()
                 raise RuntimeError(f"GroundingDINO inference failed: {e}") from e
 
+        elif model_type == "owlvit":
+            try:
+                import torch
+                processor = getattr(model, "_owlvit_processor", None)
+                if processor is None:
+                    print("[owlvit] processor not found on model object")
+                else:
+                    texts = [t.strip() for t in text_prompt.split(",") if t.strip()] if text_prompt else ["object"]
+                    # OWL-ViT expects a list of query strings per image
+                    image = Image.open(image_path).convert("RGB")
+                    inputs = processor(text=[texts], images=image, return_tensors="pt")
+                    model_device = next(model.parameters()).device
+                    inputs = {k: v.to(model_device) if hasattr(v, "to") else v for k, v in inputs.items()}
+                    with torch.no_grad():
+                        outputs = model(**inputs)
+                    target_sizes = torch.tensor([[image.size[1], image.size[0]]])
+                    # post_process_object_detection lives on the image_processor in
+                    # most transformers versions; fall back to processor itself if missing.
+                    _post_fn = getattr(processor, "post_process_object_detection", None) \
+                        or getattr(processor.image_processor, "post_process_object_detection", None)
+                    results = _post_fn(
+                        outputs=outputs,
+                        target_sizes=target_sizes,
+                        threshold=confidence_threshold,
+                    )
+                    result = results[0]
+                    for score, label_idx, box in zip(result["scores"], result["labels"], result["boxes"]):
+                        score_val = float(score)
+                        if score_val < confidence_threshold:
+                            continue
+                        x1, y1, x2, y2 = [float(v) for v in box.tolist()]
+                        cls_id = int(label_idx)
+                        cls_name = texts[cls_id] if cls_id < len(texts) else "object"
+                        annotations.append({
+                            "type": "bbox",
+                            "class_id": cls_id,
+                            "class_name": cls_name,
+                            "confidence": score_val,
+                            "bbox": [x1, y1, x2 - x1, y2 - y1],
+                        })
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                raise RuntimeError(f"OWL-ViT inference failed: {e}") from e
+
         return annotations
 
     def _get_dataset_classes(self, dataset_path: Path, format_name: str) -> List[str]:
@@ -1532,7 +1666,12 @@ class ModelManager:
             width, height = img.size
         
         image_id = image_path.stem
-        
+
+        # generic-images datasets (raw upload, no format yet) are promoted to YOLO on
+        # first annotation save — labels go next to the images in a sibling labels/ dir
+        if format_name == "generic-images":
+            format_name = "yolo"
+
         if format_name in ["yolo", "yolov5", "yolov8", "yolov9", "yolov10", "yolov11", "yolov12"]:
             # Determine labels directory — mirror the image's split/images folder.
             # Works for flat, nested, and multi-depth datasets:
@@ -1557,16 +1696,30 @@ class ModelManager:
                     labels_dir = dataset_path / "train" / "labels"
             labels_dir.mkdir(parents=True, exist_ok=True)
             
-            # Update classes if needed
-            class_to_id = {name: idx for idx, name in enumerate(classes)}
+            # Re-read the yaml every call so classes accumulate correctly across
+            # multiple images saved in the same batch (each call sees what prior
+            # calls already wrote rather than using a stale in-memory list).
+            live_classes = list(classes)
+            for _yf in list(dataset_path.glob("*.yaml")) + list(dataset_path.glob("*.yml")):
+                try:
+                    with open(_yf) as _f:
+                        _cfg = yaml.safe_load(_f) or {}
+                        if "names" in _cfg:
+                            _n = _cfg["names"]
+                            live_classes = list(_n.values()) if isinstance(_n, dict) else list(_n)
+                except Exception:
+                    pass
+                break
+
+            class_to_id = {name: idx for idx, name in enumerate(live_classes)}
             new_classes = []
             for ann in annotations:
                 if ann["class_name"] not in class_to_id:
-                    class_to_id[ann["class_name"]] = len(classes) + len(new_classes)
+                    class_to_id[ann["class_name"]] = len(live_classes) + len(new_classes)
                     new_classes.append(ann["class_name"])
-            
+
             if new_classes:
-                self._update_yolo_classes(dataset_path, classes + new_classes)
+                self._update_yolo_classes(dataset_path, live_classes + new_classes)
             
             # Write label file
             label_file = labels_dir / f"{image_id}.txt"

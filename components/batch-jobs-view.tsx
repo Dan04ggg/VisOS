@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 
 interface BatchJobState {
   job_id: string
-  status: 'running' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted'
+  status: 'running' | 'paused' | 'done' | 'error' | 'cancelled' | 'interrupted' | 'undone'
   paused: boolean
   progress: number
   total: number
@@ -170,6 +170,15 @@ export function BatchJobsView({ datasets, selectedDataset, apiUrl }: BatchJobsVi
     }
   }
 
+  const undoJob = async (job_id: string) => {
+    try {
+      const resp = await fetch(`${apiUrl}/api/auto-annotate/text-batch/${job_id}/undo`, { method: 'POST' })
+      if (!resp.ok) throw new Error((await resp.json()).detail ?? 'Undo failed')
+      setBatchJobs(prev => ({ ...prev, [job_id]: { ...prev[job_id], status: 'undone' } }))
+      toast.success('Batch annotations undone — dataset restored to pre-job state')
+    } catch (err) { toast.error(err instanceof Error ? err.message : 'Undo failed') }
+  }
+
   const continueJob = async (job_id: string) => {
     try {
       const r = await fetch(`${apiUrl}/api/auto-annotate/text-batch/${job_id}/restart`, { method: 'POST' })
@@ -252,7 +261,8 @@ export function BatchJobsView({ datasets, selectedDataset, apiUrl }: BatchJobsVi
       case 'done': return <CheckCircle2 className="w-4 h-4 text-success" />
       case 'error': return <AlertCircle className="w-4 h-4 text-destructive" />
       case 'cancelled':
-      case 'interrupted': return <StopCircle className="w-4 h-4 text-muted-foreground" />
+      case 'interrupted':
+      case 'undone': return <StopCircle className="w-4 h-4 text-muted-foreground" />
       default: return <Clock className="w-4 h-4 text-muted-foreground" />
     }
   }
@@ -441,7 +451,13 @@ export function BatchJobsView({ datasets, selectedDataset, apiUrl }: BatchJobsVi
                       Cancel
                     </Button>
                   )}
-                  {(selectedJobData.status === 'done' || selectedJobData.status === 'error' || selectedJobData.status === 'cancelled' || selectedJobData.status === 'interrupted') && (
+                  {selectedJobData.status === 'done' && (
+                    <Button size="sm" variant="outline" onClick={() => undoJob(selectedJobData.job_id)} className="gap-1.5 border-destructive/30 text-destructive hover:bg-destructive/10">
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      Undo Batch
+                    </Button>
+                  )}
+                  {(selectedJobData.status === 'done' || selectedJobData.status === 'error' || selectedJobData.status === 'cancelled' || selectedJobData.status === 'interrupted' || selectedJobData.status === 'undone') && (
                     <Button size="sm" variant="ghost" onClick={() => deleteJob(selectedJobData.job_id)} className="gap-1.5 text-muted-foreground hover:text-destructive">
                       <Trash2 className="w-3.5 h-3.5" />
                       Remove

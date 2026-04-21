@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>VisOS — Local Computer Vision Workbench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300;12..96,400;12..96,600;12..96,700;12..96,800&family=Figtree:ital,wght@0,300;0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
@@ -35,11 +35,21 @@
 
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out-quart: cubic-bezier(0.76, 0, 0.24, 1);
-}
-html, body {
-  overflow-x: hidden;
-}
 
+  /* CTA section primary color (maps to --fire) */
+  --primary: #00FFCC;
+  --primary-fg: #030308;
+}
+body {
+  overflow-x: clip !important;
+}
+/* ── Overflow fix: 3 surgical rules ── */
+.shader-hero     { overflow: hidden; }
+#shaderHeroWrapper { overflow-x: clip; }   /* clip ≠ hidden — won't break sticky */
+.marquee-wrap    { contain: layout; }
+#shaderHeroWrapper {
+  overflow-x: clip !important;
+}
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; }
 body {
@@ -48,7 +58,7 @@ body {
   font-family: var(--body);
   font-size: 15px;
   line-height: 1.6;
-  overflow-x: hidden;
+
   cursor: none;
 }
 
@@ -84,13 +94,12 @@ nav {
   z-index: 200;
   padding: 0 48px;
   height: 60px;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 24px;                          /* ← ADD: prevents zero-gap collapse */
+  display: flex; align-items: center; 
+  gap: 24px;
   background: rgba(3,3,8,0.8);
   backdrop-filter: blur(24px) saturate(1.8);
   border-bottom: 1px solid var(--border);
   transition: border-color .3s;
-  /* REMOVE: min-width: 0; overflow: hidden; */
 }
 nav.scrolled { border-bottom-color: rgba(31, 255, 218, 0.15); }
 .nav-end { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -109,6 +118,7 @@ nav.scrolled { border-bottom-color: rgba(31, 255, 218, 0.15); }
 .nav-links {
   display: flex; align-items: center; gap: 36px; list-style: none;
 }
+@media(min-width:961px){ nav { justify-content: space-between; } }
 .nav-links a {
   color: var(--text2); text-decoration: none;
   font-size: 13px; font-weight: 500; letter-spacing: 0.01em;
@@ -629,7 +639,7 @@ h5 .cyan { color: var(--cyan); }
 
 .code-block {
   background: #060612; border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
-  min-width: 0; /* prevent flex/grid container expansion */
+  min-width: 0;
 }
 .code-block-hd {
   display: flex; align-items: center; justify-content: space-between;
@@ -644,16 +654,15 @@ h5 .cyan { color: var(--cyan); }
   line-height: 1.8;
   overflow-x: auto;
   color: var(--text2);
-  max-width: 100%;        /* ← ADD THIS */
-  white-space: pre;       /* ← ADD THIS (keeps code formatting but lets scroll work) */
+  max-width: 100%;
+  white-space: pre;
 }
 
-/* Scrollable table wrapper — keeps tables from blowing out page width */
 .table-scroll {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
-  min-width: 0;           /* ← ADD THIS */
-  max-width: 100%;        /* ← ADD THIS */
+  min-width: 0;
+  max-width: 100%;
 }
 .c-kw { color: #C678DD; }
 .c-str { color: #98C379; }
@@ -743,7 +752,6 @@ h5 .cyan { color: var(--cyan); }
   background: rgba(0,229,255,0.05); padding: 1px 5px; border-radius: 3px;
 }
 
-/* Inline code snippets in prose — allow wrapping to prevent overflow */
 code:not(.code-inline) { word-break: break-word; overflow-wrap: break-word; }
 .security-note {
   margin-top: 40px; padding: 24px 28px;
@@ -760,24 +768,213 @@ code:not(.code-inline) { word-break: break-word; overflow-wrap: break-word; }
 .sec-warn-body strong { color: var(--text); }
 .sec-warn-body code { font-family: var(--mono); font-size: 11px; color: var(--cyan); }
 
-.cta-section {
-  text-align: center; padding: 140px 48px;
-  position: relative; overflow: hidden;
-  background: var(--bg2); border-top: 1px solid var(--border);
+/* ═══════════════════════════════════════════════════
+   CTA SECTION — new design matching CTASection component
+═══════════════════════════════════════════════════ */
+.cta-section-new {
+  padding: 48px 48px 80px;
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
 }
-.cta-bg-orb {
-  position: absolute; width: 700px; height: 700px;
-  background: radial-gradient(circle, rgba(255,95,31,0.08) 0%, transparent 65%);
-  top: 50%; left: 50%; transform: translate(-50%,-50%);
+
+.cta-card-wrap {
+  width: 100%;
+  max-width: 1200px;
+  position: relative;
+}
+
+.cta-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 48px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-height: 600px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  transition: box-shadow 0.5s ease;
+}
+
+.cta-card:hover {
+  box-shadow: 0 0 80px rgba(0,255,204,0.07), 0 40px 120px rgba(0,0,0,0.5);
+}
+
+/* WebGL dithering canvas */
+#cta-dither-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
+  z-index: 0;
+  opacity: 0.4;
+  mix-blend-mode: screen;
 }
-.cta-section > div:not(.cta-bg-orb) { position: relative; z-index: 1; }
-.cta-section h2 { margin-bottom: 16px; }
-.cta-section p { color: var(--text2); font-size: 18px; max-width: 480px; margin: 0 auto 44px; line-height: 1.7; }
-.cta-badges {
-  display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
-  margin-top: 44px;
+
+.cta-content {
+  position: relative;
+  z-index: 10;
+  padding: 24px 48px;
+  max-width: 760px;
+  margin: 0 auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
+
+.cta-badge {
+  margin-bottom: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 100px;
+  border: 1px solid rgba(0, 255, 204, 0.15);
+  background: rgba(0, 255, 204, 0.06);
+  padding: 6px 16px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--fire);
+  font-family: var(--mono);
+  letter-spacing: 0.04em;
+  backdrop-filter: blur(8px);
+}
+
+.cta-badge-dot {
+  position: relative;
+  display: flex;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.cta-badge-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--fire);
+  opacity: 0.75;
+  animation: cta-ping 1.4s cubic-bezier(0,0,0.2,1) infinite;
+}
+
+.cta-badge-dot-inner {
+  position: relative;
+  display: inline-flex;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--fire);
+}
+
+@keyframes cta-ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+.cta-headline {
+  font-family: var(--head);
+  font-size: clamp(44px, 6vw, 88px);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  line-height: 1.0;
+  color: var(--text);
+  margin-bottom: 32px;
+}
+
+.cta-headline .cta-sub-line {
+  color: rgba(242, 240, 236, 0.65);
+  font-weight: 300;
+}
+
+.cta-description {
+  color: var(--text2);
+  font-size: 18px;
+  max-width: 560px;
+  margin: 0 auto 48px;
+  line-height: 1.75;
+}
+
+.cta-button-wrap {
+  display: flex;
+  gap: 14px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.cta-btn-primary {
+  position: relative;
+  display: inline-flex;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  overflow: hidden;
+  border-radius: 100px;
+  background: var(--fire);
+  padding: 0 48px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--body);
+  color: #030308;
+  border: none;
+  cursor: none;
+  transition: all 0.3s ease;
+  letter-spacing: 0.01em;
+  box-shadow: 0 0 32px rgba(0,255,204,0.25);
+}
+
+.cta-btn-primary:hover {
+  background: #40ffef;
+  transform: scale(1.05);
+  box-shadow: 0 0 48px rgba(0,255,204,0.4), 0 0 0 4px rgba(0,255,204,0.12);
+}
+
+.cta-btn-primary:active { transform: scale(0.97); }
+
+.cta-btn-primary svg {
+  transition: transform 0.3s ease;
+}
+
+.cta-btn-primary:hover svg {
+  transform: translateX(3px);
+}
+
+.cta-btn-ghost {
+  display: inline-flex;
+  height: 56px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 100px;
+  background: transparent;
+  border: 1px solid rgba(0, 255, 204, 0.25);
+  padding: 0 36px;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--body);
+  color: var(--fire);
+  cursor: none;
+  transition: all 0.3s ease;
+  text-decoration: none;
+}
+
+.cta-btn-ghost:hover {
+  background: rgba(0, 255, 204, 0.07);
+  border-color: var(--fire);
+}
+
+.cta-badges-row {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 40px;
+}
+
 .badge {
   padding: 5px 12px; border-radius: 5px;
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
@@ -842,8 +1039,15 @@ footer {
 .reveal-down.visible { opacity: 1; transform: translateY(0) scale(1); }
 .reveal-pop { opacity: 0; transform: scale(0.88) translateY(24px); transition: opacity .75s var(--ease-out-expo), transform .75s var(--ease-out-expo); }
 .reveal-pop.visible { opacity: 1; transform: scale(1) translateY(0); }
-.reveal-right { opacity: 0; transform: translateX(60px) skewX(-1deg); transition: opacity .85s var(--ease-out-expo), transform .85s var(--ease-out-expo); }
-.reveal-right.visible { opacity: 1; transform: translateX(0) skewX(0); }
+.reveal-right {
+  opacity: 0;
+  transform: translateX(-60px) skewX(1deg);
+  transition: opacity .85s var(--ease-out-expo), transform .85s var(--ease-out-expo);
+}
+.reveal-right.visible {
+  opacity: 1;
+  transform: translateX(0) skewX(0);
+}
 .reveal-cta { opacity: 0; transform: translateY(50px) scale(0.93); filter: brightness(0.6); transition: opacity 1.1s var(--ease-out-expo), transform 1.1s var(--ease-out-expo), filter 1.1s ease; }
 .reveal-cta.visible { opacity: 1; transform: translateY(0) scale(1); filter: brightness(1); }
 .reveal-screenshot-hero { opacity: 0; transform: translateY(20px) scale(0.985); transition: opacity 1s .05s var(--ease-out-expo), transform 1s .05s var(--ease-out-expo); }
@@ -921,7 +1125,6 @@ footer {
   background: var(--bg2); display: flex; align-items: center; justify-content: center;
   overflow: hidden;
 }
-/* Real image inside hero screenshot area */
 .screenshot-img-area > .sc-real-img {
   position: static; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 1;
@@ -1006,7 +1209,7 @@ footer {
 .sc-card-img img.sc-real-img {
   position: static; inset: 0; width: 100%; height: 100%;
   object-fit: cover; z-index: 1;
-  display: none; /* shown by onload JS */
+  display: none;
 }
 .sc-card-img img.sc-real-img[style*="display:block"],
 .sc-card-img img.sc-real-img[style*="display: block"] {
@@ -1058,7 +1261,21 @@ footer {
 }
 
 @media(max-width:960px){
-  nav { padding: 0 24px; min-width: 0; }
+  .features-grid.reveal-tilt { opacity: 1 !important; transform: none !important; }
+  .features-grid .feat-card { opacity: 0; transform: translateY(24px); transition: opacity .6s var(--ease-out-expo), transform .6s var(--ease-out-expo); }
+  .features-grid .feat-card.card-visible { opacity: 1; transform: translateY(0); }
+  nav { 
+    padding: 0 24px; 
+    min-width: 0; 
+    border-color: rgba(31, 255, 218, 0.15);
+    max-width: 95%;
+    border-radius: 20px;
+    align-items: center;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
+    background: rgb(3 3 8 / 14%) !important;
+  }
   .nav-links { display: none; }
   .hero { grid-template-columns:1fr; padding:100px 24px 60px; gap: 20px;}
   .hero-right { display: block; width: 100%; margin-top: 0px; }
@@ -1078,24 +1295,84 @@ footer {
   .dup-grid { grid-template-columns:1fr 1fr; }
   footer { grid-template-columns:1fr 1fr; }
   .footer-bottom { flex-direction:column; gap:12px; text-align:center; padding:22px 24px; }
-  .cta-section { padding:100px 24px; }
+  .cta-section-new { padding: 32px 16px 60px; }
+  .cta-card { border-radius: 28px; min-height: 500px; }
+  .cta-content { padding: 24px 24px; }
+  .cta-headline { font-size: clamp(36px, 10vw, 56px); }
   .hero-right .carousel-label {
     margin-top: 32px;
     margin-bottom: 34px;
-}
+  }
   .btn {
     padding: 4px 8px;
     font-size: 12px;
   }
-@media (max-width: 960px) {
-  .features-grid.stagger.reveal-tilt,
-  .features-grid.stagger.reveal-tilt > * {
-    opacity: 1 !important;
-    transform: none !important;
-    transition: none !important;
-    filter: none !important;
+  .cta-btn-primary, .cta-btn-ghost { height: 48px; font-size: 14px; padding: 0 28px; }
+  .slide.center {
+    width: 400px !important;
+    height: 400px !important;
+    overflow: visible;
   }
+   .mainNav {
+    border-color: rgba(31, 255, 218, 0.15);
+    max-width: 95%;
+    border-radius: 20px;
+    align-items: center;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
 }
+
+  .marquee-wrap {
+    overflow: hidden;
+  }
+
+  .hero {
+    overflow: hidden;
+  }
+
+  .hero-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Card stage clips its own flying cards */
+  #cardStage {
+    overflow: hidden;
+  }
+
+  /* Sections that have wide padding */
+
+  .why-inner,
+  .screenshots-section,
+  .glow-cards-section,
+  .install-section {
+    overflow-x: hidden;
+  }
+
+  .marquee-wrap {
+    overflow: hidden !important;
+    max-width: 100% !important;
+  }
+
+  .nav {
+    overflow: hidden !important;
+    max-width: 95% !important;
+    border-radius: 20px;
+    padding-top: env(safe-area-inset-top);
+    height: calc(60px + env(safe-area-inset-top));
+  }
+  .wire {
+    overflow: hidden !important;
+    max-width: 100% !important;
+  }
+  .shader-hero {
+  overflow: hidden;
+}
+#cardStage {
+  overflow: hidden;
+}
+
+
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1110,7 +1387,7 @@ footer {
 .hero-right .carousel-label { margin-top: 32px; margin-bottom: 18px;}
 .slide { 
   position: absolute; 
-  border-radius: 9px; /* 12 * 0.75 */
+  border-radius: 9px;
   overflow: hidden; 
   transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); 
   cursor: pointer; 
@@ -1123,21 +1400,24 @@ footer {
   height: 100%; 
   object-fit: cover; 
   display: block; 
+  border-radius: 20px;
 }
 
 .slide.center { 
-  width: 500px;   /* 528 * 0.75 */
+  width: 500px;
   height: 500px; 
   z-index: 3; 
+  overflow: visible !important;
   opacity: 1; 
   transform: translateX(0) scale(0.75); 
   border: 0.5px solid var(--border); 
 }
 
 .slide.left {  
-  width: 350px;   /* 384 * 0.75 */
+  width: 350px;
   height: 350px; 
   z-index: 2; 
+  overflow: hidden;
   opacity: 0.5; 
   transform: translateX(-228px) scale(0.66);
   border: 0.5px solid rgba(255,255,255,0.04); 
@@ -1147,17 +1427,19 @@ footer {
   width: 350px; 
   height: 350px; 
   z-index: 2; 
-  opacity: 0.5; 
+  opacity: 0.5;
+  overflow: hidden !important; 
   transform: translateX(228px) scale(0.66);
   border: 0.5px solid rgba(255,255,255,0.04); 
 }
 
 .slide.far-left {  
-  width: 204px;   /* 272 * 0.75 */
+  width: 204px;
   height: 204px; 
   z-index: 1; 
+  overflow: hidden;
   opacity: 0; 
-  transform: translateX(-540px) scale(0.54); /* 720 * 0.75, 0.72 * 0.75 */
+  transform: translateX(-540px) scale(0.54);
   pointer-events: none; 
 }
 
@@ -1166,8 +1448,44 @@ footer {
   height: 204px; 
   z-index: 1; 
   opacity: 0; 
+  overflow: hidden;
   transform: translateX(540px) scale(0.54); 
   pointer-events: none; 
+}
+@media (max-width: 960px) {
+
+  nav.scrolled {
+    border-color: rgba(31, 255, 218, 0.15);
+    max-width: 95%;
+    border-radius: 20px;
+    align-items: center;
+    margin: 0 auto;
+    display: flex;
+    justify-content: center;
+    background: rgb(3 3 8 / 14%) !important;
+}
+
+  /* 1. Hero carousel slides */
+  .hero { overflow: hidden; }
+
+  /* 2. Marquee — parent has overflow:hidden but track still registers */
+  .marquee-wrap { overflow: hidden; }
+  .marquee-track { will-change: transform; } /* forces composited layer, stops scroll contribution */
+
+  /* 3. Wire div in shader hero */
+  .shader-hero { overflow: hidden; }
+
+  /* 4. Flipcards in #cardStage */
+  #cardStage { overflow: hidden; }
+
+  /* 5. Code comment spans overflowing code blocks */
+  .code-block pre { overflow-x: auto; }
+  .code-block pre .c-cm { 
+    display: inline;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
 }
 .slide.hidden { display: none; }
 .nav-row { display: flex; align-items: center; gap: 14px; justify-content: center;}
@@ -1202,7 +1520,7 @@ body.light .theme-toggle .icon-moon { display: none;  }
 body.light .theme-toggle .icon-sun  { display: block; }
 
 /* ═══════════════════════════════════════════════════
-   LIGHT MODE — TOKEN OVERRIDES
+   LIGHT MODE
 ═══════════════════════════════════════════════════ */
 body {
   transition: background .35s ease, color .35s ease; overflow-x: hidden;
@@ -1220,38 +1538,25 @@ body.light {
   --text3:    #9494AA;
 }
 
-/* Nav */
 body.light nav {
   background: rgba(247,247,252,0.88);
   border-bottom-color: rgba(0,0,30,0.09);
 }
 body.light nav.scrolled { border-bottom-color: rgba(0,180,140,0.2); }
-
-/* Buttons */
 body.light .btn-ghost:hover { background: rgba(0,0,30,0.04); }
 body.light .btn-primary { color: #111; }
-
-/* Terminal — intentionally stays dark */
 body.light .terminal { border-color: rgba(255,255,255,0.07); }
 body.light .terminal-bar { background: rgba(255,255,255,0.025); border-bottom-color: rgba(255,255,255,0.06); }
 body.light .status-bar  { background: rgba(255,255,255,0.02);  border-top-color: rgba(255,255,255,0.05); }
-
-/* Large decorative numbers */
 body.light .pain-num            { color: rgba(0,0,30,0.04); }
 body.light .install-step-num-big { color: rgba(0,0,30,0.04); }
 body.light .sc-cap-num          { color: rgba(0,0,30,0.04); }
-
-/* Code block */
 body.light .code-block          { background: #EEEEF6; }
-
-/* Tables */
 body.light .tools-table tr:hover td { background: rgba(0,0,30,0.025); }
 body.light .tools-table td          { border-bottom-color: rgba(0,0,30,0.05); }
 body.light .tools-table th          { background: rgba(0,0,30,0.025); }
 body.light .api-table td            { border-bottom-color: rgba(0,0,30,0.05); }
 body.light .api-table tr:hover td   { background: rgba(0,0,30,0.025); }
-
-/* Screenshot placeholder */
 body.light .screenshot-placeholder {
   background: linear-gradient(160deg, #ededf5 0%, #e5e5ee 50%, #ededf5 100%);
 }
@@ -1265,19 +1570,351 @@ body.light .sc-card-ph::before {
     repeating-linear-gradient(0deg, transparent, transparent 19px, rgba(0,0,30,0.02) 19px, rgba(0,0,30,0.02) 20px),
     repeating-linear-gradient(90deg, transparent, transparent 19px, rgba(0,0,30,0.02) 19px, rgba(0,0,30,0.02) 20px);
 }
-
-/* CTA orb */
-body.light .cta-bg-orb { background: radial-gradient(circle, rgba(0,180,130,0.07) 0%, transparent 65%); }
-
-/* Footer */
+body.light .cta-card {
+  background: #FFFFFF;
+  border-color: rgba(0,0,30,0.09);
+}
 body.light footer         { border-top-color: rgba(0,0,30,0.09); }
 body.light .footer-bottom { border-top-color: rgba(0,0,30,0.09); }
-
-/* Carousel nav */
 body.light .nav-btn { background: var(--bg); border-color: var(--border); }
-
-/* Noise overlay — lighter on white */
 body.light::before { opacity: 0.4; }
+
+/* ═══════════════════════════════════════════════════
+   DOC 10 — SHADER SHOWCASE (ShaderShowcase component exact)
+═══════════════════════════════════════════════════ */
+.shader-showcase {
+  position: relative; width: 100%; min-height: 100vh;
+  overflow: hidden; background: #000;
+  display: flex; flex-direction: column;
+}
+.shader-svg-defs { position: absolute; width: 0; height: 0; overflow: hidden; }
+#mesh-canvas {
+  position: absolute; inset: 0; width: 100% !important; height: 100% !important;
+  display: block; pointer-events: none; z-index: 0;
+}
+#mesh-canvas-wire {
+  position: absolute; inset: 0; width: 100% !important; height: 100% !important;
+  display: block; pointer-events: none; z-index: 1; opacity: 0.6;
+}
+.shader-showcase-header {
+  position: relative; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 24px 32px;
+}
+.ss-logo-wrap { display: flex; align-items: center; cursor: none; }
+.ss-nav { display: flex; align-items: center; gap: 4px; }
+.ss-nav-link {
+  color: rgba(255,255,255,0.75); font-size: 12px; font-weight: 300;
+  padding: 6px 14px; border-radius: 100px; text-decoration: none;
+  font-family: var(--mono); letter-spacing: 0.04em;
+  transition: background 0.2s, color 0.2s;
+}
+.ss-nav-link:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.ss-gooey-wrap { position: relative; display: flex; align-items: center; }
+.ss-gooey-arrow {
+  position: absolute; right: 0; z-index: 0;
+  width: 32px; height: 32px; border-radius: 100px;
+  background: #fff; color: #000; border: none; cursor: none;
+  display: flex; align-items: center; justify-content: center;
+  transform: translateX(-40px);
+  transition: transform 0.3s ease;
+}
+.ss-gooey-wrap:hover .ss-gooey-arrow { transform: translateX(-76px); }
+.ss-gooey-btn {
+  position: relative; z-index: 10;
+  display: inline-flex; align-items: center;
+  height: 32px; padding: 0 24px; border-radius: 100px;
+  background: #fff; color: #000; font-size: 12px; font-weight: 500;
+  font-family: var(--body); text-decoration: none;
+  transition: background 0.2s; cursor: none;
+}
+.ss-gooey-btn:hover { background: rgba(255,255,255,0.9); }
+/* Main — bottom-left absolute, matching source component */
+.shader-showcase-main {
+  position: absolute; bottom: 32px; left: 32px; z-index: 20;
+  max-width: min(640px, calc(100vw - 64px));
+}
+.ss-glass-badge {
+  display: inline-flex; align-items: center;
+  padding: 8px 16px; border-radius: 100px;
+  background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1);
+  margin-bottom: 24px; position: relative;
+  backdrop-filter: blur(8px);
+}
+.ss-glass-badge-line {
+  position: absolute; top: 0; left: 4px; right: 4px; height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(6,182,212,0.35), transparent);
+  border-radius: 100px;
+}
+.ss-glass-badge span { color: rgba(255,255,255,0.88); font-size: 13px; font-weight: 500; letter-spacing: 0.04em; }
+.ss-headline {
+  font-family: var(--head);
+  font-size: clamp(56px, 7.5vw, 100px);
+  font-weight: 800; letter-spacing: -0.04em; line-height: 0.95;
+  margin-bottom: 24px; color: #fff;
+}
+.ss-h-line1 {
+  display: block; font-weight: 300;
+  font-size: clamp(36px, 5vw, 60px); margin-bottom: 4px;
+  background: linear-gradient(135deg, #fff 0%, #06b6d4 30%, #f97316 70%, #fff 100%);
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  animation: ss-fade-in 0.8s 0.4s ease-out both;
+}
+.ss-h-line2 {
+  display: block; font-weight: 900; color: #fff;
+  animation: ss-fade-in 0.8s 0.55s ease-out both;
+}
+.ss-h-line3 {
+  display: block; font-weight: 300; font-style: italic; color: rgba(255,255,255,0.75);
+  animation: ss-fade-in 0.8s 0.7s ease-out both;
+}
+@keyframes ss-fade-in {
+  from { opacity:0; transform: translateY(24px); }
+  to   { opacity:1; transform: translateY(0); }
+}
+.ss-desc {
+  font-size: 16px; color: rgba(255,255,255,0.65); max-width: 500px;
+  line-height: 1.75; margin-bottom: 32px; font-weight: 300;
+  animation: ss-fade-in 0.8s 0.85s ease-out both;
+}
+.ss-btns {
+  display: flex; gap: 14px; flex-wrap: wrap;
+  animation: ss-fade-in 0.8s 1s ease-out both;
+}
+.shader-btn-outline {
+  padding: 13px 36px; border-radius: 100px;
+  background: transparent; border: 2px solid rgba(255,255,255,0.28);
+  color: #fff; font-size: 14px; font-weight: 500; font-family: var(--body);
+  cursor: none; transition: all 0.3s; text-decoration: none;
+  backdrop-filter: blur(8px); display: inline-flex; align-items: center;
+}
+.shader-btn-outline:hover { background: rgba(255,255,255,0.1); border-color: rgba(6,182,212,0.55); color: #67e8f9; }
+.shader-btn-filled {
+  padding: 13px 36px; border-radius: 100px;
+  background: linear-gradient(135deg, #06b6d4, #f97316);
+  border: none; color: #fff; font-size: 14px; font-weight: 600; font-family: var(--body);
+  cursor: none; transition: all 0.3s; text-decoration: none;
+  display: inline-flex; align-items: center;
+  box-shadow: 0 8px 32px rgba(6,182,212,0.28);
+}
+.shader-btn-filled:hover { transform: scale(1.04); box-shadow: 0 12px 40px rgba(6,182,212,0.42); }
+/* Orbital badge — bottom right */
+.orbital-badge {
+  position: absolute; bottom: 32px; right: 32px; z-index: 20;
+  width: 80px; height: 80px; display: flex; align-items: center; justify-content: center;
+}
+#pulsing-border-canvas {
+  position: absolute; inset: 10px; border-radius: 50%;
+  width: calc(100% - 20px) !important; height: calc(100% - 20px) !important;
+  display: block;
+}
+.orbital-svg {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  transform-origin: center; transform: scale(1.6);
+  animation: orbital-spin 20s linear infinite;
+}
+@keyframes orbital-spin { to { transform: scale(1.6) rotate(360deg); } }
+@media (max-width:960px) {
+  .shader-showcase-main { left: 20px; right: 20px; bottom: 20px; max-width: none; }
+  .shader-showcase-header { padding: 16px 20px; }
+  .ss-headline { font-size: clamp(44px, 10vw, 72px); }
+  .ss-nav { display: none; }
+  .orbital-badge { bottom: 20px; right: 20px; }
+}
+
+/* ═══════════════════════════════════════════════════
+   DOC 7 — ANIMATED CARD STACK
+═══════════════════════════════════════════════════ */
+.card-stack-section {
+  padding: 100px 48px; background: var(--bg2);
+  border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.card-stack-inner { max-width: 760px; margin: 0 auto; }
+.card-stack-stage {
+  position: relative; height: 380px; width: 100%;
+  overflow: hidden; margin-bottom: -1px;
+}
+.stacked-card {
+  position: absolute; left: 50%; bottom: 0;
+  transform: translateX(-50%);
+  width: 440px; height: 280px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px 12px 0 0;
+  overflow: hidden; padding: 4px;
+  transition: transform 0.6s cubic-bezier(0.4,0,0.2,1),
+              opacity 0.6s cubic-bezier(0.4,0,0.2,1),
+              box-shadow 0.6s ease;
+  will-change: transform;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+.stacked-card[data-pos="0"] { transform: translateX(-50%) translateY(12px) scale(1); z-index: 3; box-shadow: 0 32px 80px rgba(0,0,0,0.6); }
+.stacked-card[data-pos="1"] { transform: translateX(-50%) translateY(-16px) scale(0.95); z-index: 2; opacity: 0.85; }
+.stacked-card[data-pos="2"] { transform: translateX(-50%) translateY(-44px) scale(0.9); z-index: 1; opacity: 0.65; }
+.stacked-card.exiting  { transform: translateX(-50%) translateY(340px) scale(1); z-index: 10; opacity: 0; }
+.stacked-card.entering { transform: translateX(-50%) translateY(-44px) scale(0.9); opacity: 0.65; }
+.sc-card-image {
+  width: 100%; height: 200px; border-radius: 9px; overflow: hidden;
+  outline: 1px solid rgba(255,255,255,0.08); margin-bottom: 0;
+  background: var(--bg3);
+}
+.sc-card-image img { width: 100%; height: 100%; object-fit: cover; display: block; user-select: none; }
+.sc-card-footer {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 12px 12px 6px;
+}
+.sc-card-info { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sc-card-title { font-size: 14px; font-weight: 600; color: var(--text); font-family: var(--head); letter-spacing: -0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sc-card-desc { font-size: 12px; color: var(--text2); font-family: var(--mono); }
+.sc-card-read {
+  display: inline-flex; align-items: center; gap: 2px;
+  height: 36px; padding: 0 16px 0 18px; border-radius: 100px;
+  background: var(--text); color: var(--bg);
+  font-size: 13px; font-weight: 600; font-family: var(--body);
+  border: none; cursor: none; white-space: nowrap; flex-shrink: 0;
+  transition: background 0.2s;
+}
+.sc-card-read:hover { background: var(--fire); }
+.card-stack-bar {
+  position: relative; z-index: 10;
+  border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  padding: 14px;
+}
+.card-stack-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 36px; padding: 0 18px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  font-size: 13px; font-weight: 600; font-family: var(--body); color: var(--text2);
+  cursor: none; transition: all 0.2s;
+}
+.card-stack-btn:hover { background: var(--surface2); color: var(--text); border-color: rgba(0,255,200,0.2); }
+.card-stack-btn:active { transform: scale(0.98); }
+@media (max-width:960px) {
+  .stacked-card { width: calc(100vw - 48px); }
+  .card-stack-section { padding: 60px 24px; }
+}
+
+/* ═══════════════════════════════════════════════════
+   DOC 8 — GLOW CARD SPOTLIGHT
+═══════════════════════════════════════════════════ */
+.glow-cards-section {
+  padding: 120px 48px; background: var(--bg);
+}
+.glow-cards-inner { max-width: 1200px; margin: 0 auto; }
+.glow-cards-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 24px; margin-top: 64px;
+}
+.glow-card {
+  position: relative;
+  border-radius: 14px;
+  padding: 28px;
+  aspect-ratio: 3/4;
+  display: grid; grid-template-rows: 1fr auto;
+  gap: 16px;
+  box-shadow: 0 1rem 2rem -1rem rgba(0,0,0,0.8);
+  backdrop-filter: blur(5px);
+  overflow: hidden;
+  touch-action: none;
+  transition: box-shadow 0.3s;
+  /* CSS var glow system */
+  --x: 50; --xp: 0.5; --y: 50; --yp: 0.5;
+  --base: 180; --spread: 60;
+  --radius: 14; --border: 3;
+  --backdrop: hsl(0 0% 8% / 0.9);
+  --backup-border: var(--backdrop);
+  --size: 240; --outer: 1;
+  --border-size: calc(var(--border, 2) * 1px);
+  --spotlight-size: calc(var(--size, 150) * 1px);
+  --hue: calc(var(--base) + (var(--xp, 0) * var(--spread, 0)));
+  background-image: radial-gradient(
+    var(--spotlight-size) var(--spotlight-size) at
+    calc(var(--x, 0) * 1px) calc(var(--y, 0) * 1px),
+    hsl(var(--hue) 100% 70% / 0.08), transparent
+  );
+  background-color: var(--backdrop);
+  background-size: calc(100% + (2 * var(--border-size))) calc(100% + (2 * var(--border-size)));
+  background-position: 50% 50%;
+  background-attachment: fixed;
+  border: var(--border-size) solid var(--backup-border);
+}
+.glow-card::before, .glow-card::after {
+  pointer-events: none; content: "";
+  position: absolute; inset: calc(var(--border-size) * -1);
+  border: var(--border-size) solid transparent;
+  border-radius: calc(var(--radius) * 1px);
+  background-attachment: fixed;
+  background-size: calc(100% + (2 * var(--border-size))) calc(100% + (2 * var(--border-size)));
+  background-repeat: no-repeat; background-position: 50% 50%;
+  -webkit-mask: linear-gradient(transparent, transparent), linear-gradient(white, white);
+  mask: linear-gradient(transparent, transparent), linear-gradient(white, white);
+  -webkit-mask-clip: padding-box, border-box;
+  mask-clip: padding-box, border-box;
+  -webkit-mask-composite: xor;
+  mask-composite: intersect;
+}
+.glow-card::before {
+  background-image: radial-gradient(
+    calc(var(--spotlight-size) * 0.75) calc(var(--spotlight-size) * 0.75) at
+    calc(var(--x, 0) * 1px) calc(var(--y, 0) * 1px),
+    hsl(var(--hue) 100% 50% / 1), transparent 100%
+  );
+  filter: brightness(2);
+}
+.glow-card::after {
+  background-image: radial-gradient(
+    calc(var(--spotlight-size) * 0.5) calc(var(--spotlight-size) * 0.5) at
+    calc(var(--x, 0) * 1px) calc(var(--y, 0) * 1px),
+    hsl(0 100% 100% / 1), transparent 100%
+  );
+}
+.glow-card-icon {
+  width: 56px; height: 56px; border-radius: 12px;
+  background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
+  display: flex; align-items: center; justify-content: center; margin-bottom: 8px;
+}
+.glow-card-icon svg { width: 28px; height: 28px; }
+.glow-card h3 {
+  font-family: var(--head); font-size: 22px; font-weight: 700;
+  color: var(--text); letter-spacing: -0.025em; margin-bottom: 10px;
+}
+.glow-card p { font-size: 14px; color: var(--text2); line-height: 1.7; }
+.glow-card-tag {
+  font-family: var(--mono); font-size: 11px; color: var(--fire);
+  letter-spacing: 0.08em; text-transform: uppercase;
+  padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.06);
+}
+@media (max-width:960px) {
+  .glow-cards-grid { grid-template-columns: 1fr; }
+  .glow-cards-section { padding: 80px 24px; }
+  .glow-card { aspect-ratio: auto; }
+}
+
+/* Paste this into your <style> block */
+
+/* Fix horizontal overflow without breaking shader-hero sticky */
+.why-inner,
+.screenshots-section,
+.glow-cards-section,
+.card-stack-section,
+.cta-section-new,
+footer,
+.footer-bottom,
+.marquee-wrap {
+  max-width: 100vw;
+  overflow-x: hidden;
+}
+
+/* The marquee track specifically causes overflow */
+.marquee-track {
+  max-width: none; /* keep it, but clip the parent */
+}
+
+/* Nav overflow on mobile */
+nav {
+  overflow: hidden;
+}
+
 </style>
 </head>
 <body>
@@ -1298,9 +1935,7 @@ body.light::before { opacity: 0.4; }
   </ul>
   <div class="nav-end">
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle light/dark mode">
-      <!-- Moon icon (shown in dark mode) -->
       <svg class="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <!-- Sun icon (shown in light mode) -->
       <svg class="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
     <a href="https://github.com/Dan04ggg/VisOS" target="_blank" class="btn btn-ghost">
@@ -1322,9 +1957,9 @@ body.light::before { opacity: 0.4; }
       Free · Local · Open Source
     </div>
     <h1>
-      <span class="h1-plain">The CV Dataset</span>
-      <span class="h1-fire">Workbench</span>
-      <span class="h1-subtle">You Own.</span>
+      <span class="ss-h-line1" style="filter:url(#ss-text-glow);">Computer Vision</span>
+      <span class="ss-h-line2">Workbench</span>
+      <span class="ss-h-line3">Fully Local</span>
     </h1>
     <p class="hero-desc">Annotate, convert, augment, merge, and train computer vision models — entirely on your machine. No cloud, no accounts, no bill.</p>
     <div class="hero-actions">
@@ -1588,13 +2223,411 @@ body.light::before { opacity: 0.4; }
 
 <div class="divider"></div>
 
+
+  <!-- SVG Filter Defs (glass-effect, gooey-filter, logo-glow, text-glow, gradients) -->
+  <svg class="shader-svg-defs">
+    <defs>
+      <filter id="glass-effect" x="-50%" y="-50%" width="200%" height="200%">
+        <feTurbulence baseFrequency="0.005" numOctaves="1" result="noise"/>
+        <feDisplacementMap in="SourceGraphic" in2="noise" scale="0.3"/>
+        <feColorMatrix type="matrix" values="1 0 0 0 0.02  0 1 0 0 0.02  0 0 1 0 0.05  0 0 0 0.9 0" result="tint"/>
+      </filter>
+      <filter id="gooey-filter" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+        <feColorMatrix in="blur" mode="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9" result="gooey"/>
+        <feComposite in="SourceGraphic" in2="gooey" operator="atop"/>
+      </filter>
+      <filter id="ss-logo-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <filter id="ss-text-glow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+        <feMerge><feMergeNode in="coloredBlur"/><feMergeNode in="SourceGraphic"/></feMerge>
+      </filter>
+      <linearGradient id="ss-logo-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#06b6d4"/>
+        <stop offset="50%" stop-color="#ffffff"/>
+        <stop offset="100%" stop-color="#0891b2"/>
+      </linearGradient>
+      <linearGradient id="ss-hero-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="#ffffff"/>
+        <stop offset="30%" stop-color="#06b6d4"/>
+        <stop offset="70%" stop-color="#f97316"/>
+        <stop offset="100%" stop-color="#ffffff"/>
+      </linearGradient>
+    </defs>
+  </svg>
+</div>
+<div class="divider"></div>
+ 
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Figtree:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap');
+.shader-hero{
+  font-family:'Figtree',sans-serif;
+  position:relative;
+  width:100%;
+  height:100vh;
+  min-height:420px;
+  border-radius:0px;
+  overflow:hidden;
+  background:#000;
+  color:#fff;
+}
+.shader-hero .mesh{position:absolute;inset:0;background:radial-gradient(ellipse at 10% 80%,#00fad0 0%,transparent 45%),radial-gradient(ellipse at 50% 20%,#1d8d95 0%,transparent 50%),radial-gradient(ellipse at 30% 50%,#1b314b 0%,transparent 60%),#000;animation:sh-mm 15s ease-in-out infinite; overflow-x: hidden;}
+@keyframes sh-mm{0%,100%{filter:hue-rotate(0deg)}25%{filter:hue-rotate(15deg)}75%{filter:hue-rotate(-15deg)}}
+.shader-hero .wire{
+  position:absolute;
+  inset:0;
+  opacity:.18;
+  background-image:
+    linear-gradient(rgba(255,255,255,.1) 2px,transparent 2px),
+    linear-gradient(90deg,rgba(255,255,255,.1) 2px,transparent 2px);
+  background-size:60px 60px;
+  animation:sh-ws 20s linear infinite;
+}
+@keyframes sh-ws{0%{transform:perspective(800px) rotateX(60deg) translateY(0)}100%{transform:perspective(800px) rotateX(60deg) translateY(60px)}}
+.shader-hero-content{
+  position:absolute;
+  bottom:2rem;
+  left:1.5rem;
+  z-index:10;
+  width:35%;
+  margin-bottom:40px;
+  margin-left:40px;
+}
+.shader-badge{
+  display:inline-flex;
+  align-items:center;
+  padding:6px 20px;
+  border-radius:999px;
+  background:rgba(255,255,255,.07);
+  backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,.15);
+  font-size:22px;
+  color:rgba(255,255,255,.85);
+  font-weight:300;
+  margin-bottom:24px;
+}
+.shader-badge::before{
+  content:'';
+  display:inline-block;
+  width:12px;
+  height:12px;
+  border-radius:50%;
+  background:#00fad0;
+  margin-right:12px;
+}
+.shader-h1{
+  font-size:clamp(48px,8vw,80px);
+  font-weight:300;
+  line-height:1.1;
+  letter-spacing:-.02em;
+  color:#fff;
+  margin-bottom:20px;
+}
+.shader-h1 em{font-family:'Instrument Serif',serif;font-style:italic;font-weight:400;}
+.shader-p{
+  font-size:22px;
+  font-weight:300;
+  color:rgba(255,255,255,.65);
+  line-height:1.7;
+  margin-bottom:28px;
+}
+.shader-btns{
+  display:flex;
+  align-items:center;
+  gap:20px;
+  flex-wrap:wrap;
+}
+.shader-btn{
+  padding:14px 36px;
+  border-radius:999px;
+  font-size:22px;
+  font-weight:400;
+  cursor:pointer;
+  transition:all .2s;
+  border:1px solid rgba(255,255,255,.3);
+  background:transparent;
+  color:#fff;
+  font-family:'Figtree',sans-serif;
+}.shader-btn:hover{background:rgba(255,255,255,.1);}
+.shader-btn-primary{background:#fff;color:#000;border-color:#fff;}
+.shader-btn-primary:hover{background:rgba(255,255,255,.88);}
+#cardStage{position:absolute;top:0;right:0;width:67%;height:100%;overflow:visible;z-index:2;}
+.flipcard{position:absolute;width:13%;height:28%;transform-style:preserve-3d;perspective:800px;cursor:pointer;will-change:transform,opacity;}
+.flipcard-inner{position:relative;width:100%;height:100%;transform-style:preserve-3d;transition:transform .55s cubic-bezier(.34,1.56,.64,1);}
+.flipcard:hover .flipcard-inner{transform:rotateY(180deg);}
+.flipcard-front,.flipcard-back{position:absolute;inset:0;border-radius:15px;overflow:hidden;backface-visibility:hidden;-webkit-backface-visibility:hidden;}
+.flipcard-front{background:#e5e7eb;box-shadow:0 4px 16px rgba(0,0,0,.35);}
+.flipcard-front img{width:100%;height:100%;object-fit:cover;display:block;}
+.flipcard-front-overlay{position:absolute;inset:0;background:rgba(0,0,0,.1);}
+.flipcard:hover .flipcard-front-overlay{background:transparent;}
+.flipcard-back{background:#111827;transform:rotateY(180deg);display:flex;align-items:center;justify-content:center;border:1px solid #374151;}
+.flipcard-back-label{text-align:center;}
+.flipcard-back-label span:first-child{display:block;font-size:7px;font-weight:700;color:#60a5fa;letter-spacing:.15em;text-transform:uppercase;margin-bottom:2px;}
+.flipcard-back-label span:last-child{font-size:9px;font-weight:500;color:#fff;}
+.scroll-hint{position:absolute;bottom:10px;right:16px;font-size:10px;color:rgba(255,255,255,.35);letter-spacing:.12em;text-transform:uppercase;z-index:20;pointer-events:none;}
+.left-fade{position:absolute;top:0;left:0;width:40%;height:100%;background:linear-gradient(to right,#000 40%,transparent 100%);z-index:3;pointer-events:none;}
+ 
+/* ── Mobile: stack text on top, cards on bottom ── */
+@media (max-width:768px){
+  .shader-hero{
+    min-height:100svh;
+    height:100svh;
+    overflow:visible;
+  }
+ 
+  /* Text content: top half */
+  .shader-hero-content{
+    bottom:auto;
+    top:0;
+    left:0;
+    width:100%;
+    margin:0;
+    padding:2rem 1.5rem 1.5rem;
+    /* Subtle gradient so text stays readable over the mesh */
+    background:linear-gradient(to bottom,rgba(0,0,0,.55) 80%,transparent 100%);
+  }
+ 
+  .shader-badge{
+    font-size:13px;
+    padding:4px 14px;
+    margin-bottom:14px;
+  }
+  .shader-badge::before{width:7px;height:7px;margin-right:7px;}
+ 
+  .shader-h1{
+    font-size:clamp(32px,9vw,52px);
+    margin-bottom:12px;
+  }
+ 
+  .shader-p{
+    font-size:14px;
+    margin-bottom:16px;
+    line-height:1.6;
+  }
+ 
+  .shader-btn{
+    padding:10px 24px;
+    font-size:14px;
+  }
+ 
+  /* Card stage: bottom half, full width */
+  #cardStage{
+    top:auto;
+    bottom:0;
+    right:0;
+    width:100%;
+    height:52%;
+  }
+ 
+  /* Wider, taller cards on mobile */
+  .flipcard{
+    width:50% !important;
+    height:38% !important;
+  }
+ 
+  /* Left fade makes no sense when stage is full-width below */
+  .left-fade{display:none;}
+ 
+  /* Fade cards into the text area above */
+  #cardStage::before{
+    content:'';
+    position:absolute;
+    top:0;left:0;right:0;
+    height:35%;
+    z-index:10;
+    pointer-events:none;
+  }
+ 
+  .scroll-hint{display:none;}
+
+  .shader-hero .mesh {
+        background: radial-gradient(ellipse at 30% 83%, #00fad0 0%, #00000000 54%), radial-gradient(ellipse at 66% 40%, #1d8d95 8%, #ff000000 69%), radial-gradient(ellipse at 30% 50%, #1b314b 0%, #e50a0a00 60%), #000 !important;
+  }
+}
+</style>
+ 
+<div id="shaderHeroWrapper" style="height:3500px;position:relative;">
+  <div class="shader-hero" id="heroSection" style="position:sticky;top:0;">
+    <div class="mesh"></div>
+    <div class="wire"></div>
+    <div id="cardStage"></div>
+    <div class="left-fade"></div>
+    <div class="shader-hero-content">
+      <div class="shader-badge">All-in-One Platform</div>
+      <h1 class="shader-h1"><em>For All</em> Annotation<br><span>Types</span></h1>
+      <p class="shader-p">Annotate, manage, and train models for segmentation, object detection, and keypoint detection.</p>
+      <div class="shader-btns">
+        <button class="shader-btn">GitHub</button>
+        <button class="shader-btn shader-btn-primary">Get Started</button>
+      </div>
+    </div>
+    <div class="scroll-hint">↕ scroll</div>
+  </div>
+</div>
+ 
+<script>
+(function(){
+  const hero = document.getElementById('heroSection');
+  const stage = document.getElementById('cardStage');
+  const wrapper = hero.parentElement;
+ 
+  const IMAGES = Array.from({length:20},(_,i)=>`assets/images/samples/Screenshot 2026-04-20 ${['114550','114657','114746','115317','115326','115334','115344','115527','115629','115713','115824','115839','115940','120018','120026','120035','121025','121332','121339','121357'][i]}.png`);
+  const TOTAL = IMAGES.length;
+ 
+  const isMobileLayout = () => window.innerWidth <= 768;
+
+  const S_MORPH_START  = isMobileLayout() ? 0   : 600;
+  const S_MORPH_END    = isMobileLayout() ? 600  : 1400;
+  const S_FAN_START    = isMobileLayout() ? 600  : 1400;
+  const S_FAN_END      = isMobileLayout() ? 1600 : 2800;
+  const SCROLL_BUDGET  = isMobileLayout() ? 1600 : 2800;
+ 
+  let morphVal=0, morphTarget=0, fanProgress=0, mouseXOff=0;
+ 
+  const cur = IMAGES.map(()=>({x:0,y:0,r:0,s:1,o:1}));
+ 
+  const isMobile = () => window.innerWidth <= 768;
+ 
+  const cards = IMAGES.map((src,i)=>{
+    const el=document.createElement('div');
+    el.className='flipcard';
+    el.innerHTML=`<div class="flipcard-inner"><div class="flipcard-front"><img src="${src}" loading="lazy"><div class="flipcard-front-overlay"></div></div><div class="flipcard-back"><div class="flipcard-back-label"><span>View</span><span>Details</span></div></div></div>`;
+    const w=stage.offsetWidth, h=stage.offsetHeight;
+    el.style.cssText=`left:${w/2}px;top:${h/2}px;opacity:1;`;
+    stage.appendChild(el);
+    return el;
+  });
+ 
+  function getProgress(){
+    const wrapTop = wrapper.getBoundingClientRect().top + window.scrollY;
+    const scrolled = window.scrollY - wrapTop;
+    return Math.max(0, Math.min(SCROLL_BUDGET, scrolled));
+  }
+ 
+  window.addEventListener('scroll', ()=>{
+    const p = getProgress();
+    morphTarget = Math.max(0, Math.min(1, (p - S_MORPH_START) / (S_MORPH_END - S_MORPH_START)));
+    fanProgress  = Math.max(0, Math.min(1, (p - S_FAN_START)  / (S_FAN_END  - S_FAN_START)));
+  }, {passive:true});
+ 
+  stage.addEventListener('mousemove', e=>{
+    const r = stage.getBoundingClientRect();
+    mouseXOff = ((e.clientX - r.left) / r.width * 2 - 1) * 30;
+  });
+ 
+  const lerp = (a,b,t) => a*(1-t)+b*t;
+  const clamp = (v,lo,hi) => Math.max(lo,Math.min(hi,v));
+  const ease = t => t<.5 ? 2*t*t : -1+(4-2*t)*t;
+
+ 
+  function target(i){
+    const w = stage.offsetWidth, h = stage.offsetHeight;
+    const mobileXShift = isMobile() ? -w * 0.25 : 0; // tweak this value
+ 
+    const cr = isMobile() 
+      ? clamp(Math.min(w, h) * 0.304, 80, 176)  // smaller on mobile
+      : clamp(Math.min(w, h) * 0.38, 100, 220);
+    const ca  = (i / TOTAL) * Math.PI * 2;
+    const circ = {
+      x: Math.cos(ca)*cr + mobileXShift,
+      y: Math.sin(ca)*cr + (isMobile() ? -h * 0.25 : 0),
+      r: ca*180/Math.PI+90,
+      s: 1,
+      o: 1
+    };
+ 
+    if(morphVal < 0.001) return {...circ};
+ 
+    const arcR   = Math.min(w, h * 1.8) * 1.1;
+    const apexY  = h * 0.05;
+    const centY  = apexY + arcR;
+    const spread = isMobile() ? 90 : 110;
+    const start  = -90 - spread/2;
+    const ang    = start + i * (spread / (TOTAL-1));
+    const rad    = ang * Math.PI / 180;
+    const arcRest = {
+      x: Math.cos(rad)*arcR + mouseXOff + mobileXShift,
+      y: Math.sin(rad)*arcR + centY + (isMobile() ? -h * 0.45 : 0),  // ← add offset
+      r: ang+90,
+      s: isMobile() ? 1.5 : 1.25,
+      o: 1
+    };
+ 
+    const cardThreshold = i / TOTAL;
+    const cardReveal = clamp((fanProgress - cardThreshold * 0.85) / 0.12, 0, 1);
+    const fanned = ease(cardReveal);
+ 
+    const pile = {
+      x: (w * 0.15 + mouseXOff * 0.3) + mobileXShift,  // shift left
+      y: isMobile() ? -h * 0.12 : 0,                              // shift up
+      r: (i - TOTAL/2) * 2,
+      s: 0.9,
+      o: 1 + fanned * 0.7
+    };
+ 
+    const arcFanned = {
+      x: lerp(pile.x, arcRest.x, fanned),
+      y: lerp(pile.y, arcRest.y, fanned),
+      r: lerp(pile.r, arcRest.r, fanned),
+      s: lerp(pile.s, arcRest.s, fanned),
+      o: lerp(pile.o, arcRest.o, fanned)
+    };
+ 
+    return {
+      x: lerp(circ.x, arcFanned.x, morphVal),
+      y: lerp(circ.y, arcFanned.y, morphVal),
+      r: lerp(circ.r, arcFanned.r, morphVal),
+      s: lerp(circ.s, arcFanned.s, morphVal),
+      o: lerp(circ.o, arcFanned.o, morphVal)
+    };
+  }
+ 
+  function tick(){
+    morphVal += (morphTarget - morphVal) * 0.06;
+    const w = stage.offsetWidth, h = stage.offsetHeight;
+    const ox = w/2, oy = h/2;
+    cards.forEach((card, i)=>{
+      const t = target(i), c = cur[i];
+      c.x += (t.x - c.x) * 0.10;
+      c.y += (t.y - c.y) * 0.10;
+      c.r += (t.r - c.r) * 0.10;
+      c.s += (t.s - c.s) * 0.10;
+      c.o += (t.o - c.o) * 0.09;
+      card.style.left = ox + 'px';
+      card.style.top  = oy + 'px';
+      card.style.opacity = c.o;
+      card.style.zIndex  = i;
+      card.style.transform = `translate(${c.x}px,${c.y}px) rotate(${c.r}deg) scale(${c.s})`;
+    });
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
+(function() {
+  const wrapper = document.getElementById('shaderHeroWrapper');
+  if (!wrapper) return;
+  function setHeight() {
+    wrapper.style.height = window.innerWidth <= 768 ? '2000px' : '3500px';
+  }
+  setHeight();
+  window.addEventListener('resize', setHeight);
+})();
+</script>
+ 
+
+
+<div class="divider"></div>
+
 <!-- SCREENSHOTS -->
 <section id="screenshots" class="screenshots-section">
   <div class="sec-tag reveal-section-hd">In the App</div>
   <h2 class="reveal-section-hd">See it in action.</h2>
   <p class="sec-intro reveal-section-hd">Every tool in VisOS is built for speed and clarity. Here's what working with your datasets actually looks like.</p>
 
-  <!-- Hero screenshot: annotation canvas -->
   <div class="screenshot-hero-wrap reveal-screenshot-hero">
     <div class="screenshot-chrome">
       <div class="screenshot-browser-bar">
@@ -1608,7 +2641,6 @@ body.light::before { opacity: 0.4; }
       </div>
       <div class="screenshot-hero-frame">
       <div class="screenshot-img-area">
-        <!-- Real screenshot — shown when image loads, placeholder shown when missing -->
         <img class="sc-real-img"
              src="assets/images/annotate_rounded_bottom.png"
              alt="Annotation Canvas"
@@ -1641,7 +2673,6 @@ body.light::before { opacity: 0.4; }
     </div>
   </div>
 
-  <!-- Three-up grid -->
   <div class="screenshots-grid stagger-screenshots">
     <div class="screenshot-card">
       <div class="sc-card-img">
@@ -1705,7 +2736,6 @@ body.light::before { opacity: 0.4; }
     </div>
   </div>
 
-  <!-- Two-up -->
   <div style="margin-top:24px;" class="screenshots-duo stagger-screenshots">
     <div class="screenshot-card">
       <div class="sc-card-img" style="aspect-ratio:16/11;">
@@ -1749,6 +2779,9 @@ body.light::before { opacity: 0.4; }
     </div>
   </div>
 </section>
+
+<div class="divider"></div>
+
 
 <div class="divider"></div>
 
@@ -1820,6 +2853,49 @@ body.light::before { opacity: 0.4; }
 
 <div class="divider"></div>
 
+<!-- DOC 8: GLOW CARD SPOTLIGHT — VisOS core pillars -->
+<section class="glow-cards-section" id="glowCards">
+  <div class="glow-cards-inner">
+    <div class="sec-tag">Core Pillars</div>
+    <h2>Built on three<br><span class="cyan">unshakeable principles.</span></h2>
+    <p class="sec-intro">Everything in VisOS exists to serve one mission: give CV practitioners complete control over their data and models.</p>
+    <div class="glow-cards-grid stagger reveal-pop" id="glowCardsGrid">
+      <div class="glow-card" data-base="180" data-spread="60">
+        <div>
+          <div class="glow-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#00FFCC" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          </div>
+          <h3>Total Privacy</h3>
+          <p>Your images never leave your machine. No uploads, no cloud processing, no third-party servers. Medical, defense, and proprietary datasets stay where they belong.</p>
+        </div>
+        <div class="glow-card-tag">100% Local · Air-gap ready</div>
+      </div>
+      <div class="glow-card" data-base="160" data-spread="80">
+        <div>
+          <div class="glow-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#00E5FF" stroke-width="1.5" stroke-linecap="round"><polyline points="15 3 19 7 15 11"/><path d="M4 7h15"/><polyline points="5 17 1 13 5 9"/><path d="M16 13H1"/></svg>
+          </div>
+          <h3>Format Freedom</h3>
+          <p>13+ annotation formats supported. YOLO, COCO, Pascal VOC, TFRecord — auto-detected on load, converted in one click. Never write another conversion script.</p>
+        </div>
+        <div class="glow-card-tag">13+ formats · auto-detect</div>
+      </div>
+      <div class="glow-card" data-base="140" data-spread="100">
+        <div>
+          <div class="glow-card-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#FFD166" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          </div>
+          <h3>Zero Cost</h3>
+          <p>No per-image pricing. No seat licenses. No export fees. VisOS is free and open source under AGPL 3.0. Your dataset budget goes to compute, not platforms.</p>
+        </div>
+        <div class="glow-card-tag">Free forever · AGPL 3.0</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
 <!-- ARCHITECTURE -->
 <section id="architecture" class="section">
   <div class="sec-tag">Architecture</div>
@@ -1860,6 +2936,8 @@ body.light::before { opacity: 0.4; }
     </div>
   </div>
 </section>
+
+
 
 <div class="divider"></div>
 
@@ -1971,6 +3049,102 @@ job = response.<span class="c-fn">json</span>()
 
 <div class="divider"></div>
 
+<!-- DOC 9: SHADER HERO BANNER — Nebula WebGL shader with VisOS content -->
+
+
+
+
+<script>
+(function(){
+const VS=`#version 300 es
+precision highp float;
+in vec4 position;
+void main(){gl_Position=position;}`;
+
+const FS=`#version 300 es
+precision highp float;
+out vec4 O;
+uniform vec2 resolution;
+uniform float time;
+#define FC gl_FragCoord.xy
+#define T time
+#define R resolution
+#define MN min(R.x,R.y)
+float rnd(vec2 p){p=fract(p*vec2(12.9898,78.233));p+=dot(p,p+34.56);return fract(p.x*p.y);}
+float noise(in vec2 p){vec2 i=floor(p),f=fract(p),u=f*f*(3.-2.*f);float a=rnd(i),b=rnd(i+vec2(1,0)),c=rnd(i+vec2(0,1)),d=rnd(i+1.);return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);}
+float fbm(vec2 p){float t=.0,a=1.;mat2 m=mat2(1.,-.5,.2,1.2);for(int i=0;i<5;i++){t+=a*noise(p);p*=2.*m;a*=.5;}return t;}
+float clouds(vec2 p){float d=1.,t=.0;for(float i=.0;i<3.;i++){float a=d*fbm(i*10.+p.x*.2+.2*(1.+i)*p.y+d+i*i+p);t=mix(t,d,a);d=a;p*=2./(i+1.);}return t;}
+void main(void){
+  vec2 uv=(FC-.5*R)/MN,st=uv*vec2(2,1);
+  vec3 col=vec3(0);
+  float bg=clouds(vec2(st.x+T*.5,-st.y));
+  uv*=1.-.3*(sin(T*.2)*.5+.5);
+  for(float i=1.;i<12.;i++){
+    uv+=.1*cos(i*vec2(.1+.01*i,.8)+i*i+T*.5+.1*uv.x);
+    vec2 p=uv;float d=length(p);
+    col+=.00125/d*(cos(sin(i)*vec3(0.1,4.5,0.1))+1.);
+    float b=noise(i+p+bg*1.731);
+    col+=.002*b/length(max(p,vec2(b*p.x*.02,p.y)));
+    col=mix(col,vec3(bg*0.01,bg*0.19,bg*0.225),d);
+  }
+  O=vec4(col,1);
+}`;
+
+const canvas=document.getElementById('nebula-canvas');
+const banner=canvas.parentElement;
+
+function resize(){
+  const dpr=Math.max(1,0.5*(window.devicePixelRatio||1));
+  canvas.width=banner.offsetWidth*dpr;
+  canvas.height=banner.offsetHeight*dpr;
+  if(gl)gl.viewport(0,0,canvas.width,canvas.height);
+}
+
+const gl=canvas.getContext('webgl2');
+if(!gl){console.warn('WebGL2 not supported');return;}
+
+function mkShader(type,src){
+  const s=gl.createShader(type);
+  gl.shaderSource(s,src);gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))console.error(gl.getShaderInfoLog(s));
+  return s;
+}
+
+const prog=gl.createProgram();
+gl.attachShader(prog,mkShader(gl.VERTEX_SHADER,VS));
+gl.attachShader(prog,mkShader(gl.FRAGMENT_SHADER,FS));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog,gl.LINK_STATUS))console.error(gl.getProgramInfoLog(prog));
+
+const buf=gl.createBuffer();
+gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,1,-1,-1,1,1,1,-1]),gl.STATIC_DRAW);
+const pos=gl.getAttribLocation(prog,'position');
+gl.enableVertexAttribArray(pos);
+gl.vertexAttribPointer(pos,2,gl.FLOAT,false,0,0);
+
+const uRes=gl.getUniformLocation(prog,'resolution');
+const uTime=gl.getUniformLocation(prog,'time');
+
+resize();
+window.addEventListener('resize',resize);
+
+let raf;
+function loop(now){
+  gl.clearColor(0,0,0,1);gl.clear(gl.COLOR_BUFFER_BIT);
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+  gl.uniform2f(uRes,canvas.width,canvas.height);
+  gl.uniform1f(uTime,now*1e-3);
+  gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+  raf=requestAnimationFrame(loop);
+}
+loop(0);
+})();
+</script>
+
+<div class="divider"></div>
+
 <!-- TROUBLESHOOTING -->
 <section id="docs" class="section">
   <div class="sec-tag">Documentation</div>
@@ -2013,25 +3187,54 @@ job = response.<span class="c-fn">json</span>()
   </div>
 </section>
 
-<!-- CTA -->
-<div class="cta-section">
-  <div class="cta-bg-orb"></div>
-  <div>
-    <div class="sec-tag" style="justify-content:center;margin-bottom:20px;">Open Source · Free Forever</div>
-    <h2>Start building better<br><span class="cyan">CV datasets today.</span></h2>
-    <p>No sign-up. No cloud. No credit card. Just clone and run.</p>
-    <div style="display:flex;gap:14px;justify-content:center;flex-wrap:wrap;">
-      <a href="https://github.com/Dan04ggg/VisOS" target="_blank" class="btn btn-primary btn-lg">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
-        View on GitHub
-      </a>
-      <a href="#install" class="btn btn-outline btn-lg">Installation Guide</a>
-    </div>
-    <div class="cta-badges">
-      <div class="badge badge-blue">TypeScript 58%</div>
-      <div class="badge badge-orange">Python 40%</div>
-      <div class="badge badge-green">Free · Local · No Cloud</div>
-      <div class="badge badge-purple">AGPL 3.0 License</div>
+<!-- ═══════════════════════════════════════════════════
+     CTA — new design matching CTASection component
+═══════════════════════════════════════════════════ -->
+<div class="cta-section-new">
+  <div class="cta-card-wrap reveal-cta" id="ctaCardWrap">
+    <div class="cta-card" id="ctaCard">
+      <!-- WebGL dithering shader background -->
+      <canvas id="cta-dither-canvas"></canvas>
+
+      <div class="cta-content">
+        <!-- Pulsing badge -->
+        <div class="cta-badge">
+          <span class="cta-badge-dot">
+            <span class="cta-badge-ping"></span>
+            <span class="cta-badge-dot-inner"></span>
+          </span>
+          Open Source · Free Forever
+        </div>
+
+        <!-- Headline -->
+        <div class="cta-headline">
+          Start building better<br>
+          <span class="cta-sub-line">CV datasets today.</span>
+        </div>
+
+        <!-- Description -->
+        <p class="cta-description">
+          No sign-up. No cloud. No credit card. Clone, run, and own your entire computer vision pipeline from day one.
+        </p>
+
+        <!-- Buttons -->
+        <div class="cta-button-wrap">
+          <a href="https://github.com/Dan04ggg/VisOS" target="_blank" class="cta-btn-primary">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+            View on GitHub
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </a>
+          <a href="#install" class="cta-btn-ghost">Installation Guide</a>
+        </div>
+
+        <!-- Badges row -->
+        <div class="cta-badges-row">
+          <div class="badge badge-blue">TypeScript 58%</div>
+          <div class="badge badge-orange">Python 40%</div>
+          <div class="badge badge-green">Free · Local · No Cloud</div>
+          <div class="badge badge-purple">AGPL 3.0 License</div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -2082,6 +3285,9 @@ job = response.<span class="c-fn">json</span>()
 </div>
 
 <script>
+
+
+
 /* CURSOR */
 const dot = document.getElementById('cdot');
 const ring = document.getElementById('cring');
@@ -2100,7 +3306,6 @@ document.addEventListener('mousemove',e=>{
 (function(){
   var body = document.body;
   var btn  = document.getElementById('themeToggle');
-  // Restore saved preference
   if(localStorage.getItem('visosTheme') === 'light') body.classList.add('light');
   btn.addEventListener('click', function(){
     body.classList.toggle('light');
@@ -2218,6 +3423,181 @@ const track=document.getElementById('marqueeTrack');
   window.addEventListener('resize',()=>{ buildDots(); boxes.forEach((_,i)=>{ boxes[i]=newBox(); }); });
 })();
 
+/* ═══════════════════════════════════════════════════
+   CTA DITHERING SHADER (WebGL — matches @paper-design/shaders-react Dithering warp/4x4)
+═══════════════════════════════════════════════════ */
+(function initCtaDither(){
+  const canvas = document.getElementById('cta-dither-canvas');
+  if (!canvas) return;
+
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return;
+
+  function resize() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height;
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+
+  const vsSource = `
+    attribute vec2 a_position;
+    void main() {
+      gl_Position = vec4(a_position, 0.0, 1.0);
+    }
+  `;
+
+  // Dithering shader with warp shape — matches the paper-design Dithering component
+  // colorFront: #EC4E02 (deep orange-red), shape: warp, type: 4x4
+  const fsSource = `
+    precision mediump float;
+    uniform vec2 u_resolution;
+    uniform float u_time;
+    uniform float u_speed;
+
+    // Bayer 4x4 dithering matrix — use mod+step to avoid dynamic indexing
+    float bayer4x4(vec2 pos) {
+      float x = mod(floor(pos.x), 4.0);
+      float y = mod(floor(pos.y), 4.0);
+      // Row 0: 0,8,2,10  Row1: 12,4,14,6  Row2: 3,11,1,9  Row3: 15,7,13,5
+      float v = 0.0;
+      if (y < 1.0) {
+        if (x < 1.0)      v =  0.0;
+        else if (x < 2.0) v =  8.0;
+        else if (x < 3.0) v =  2.0;
+        else               v = 10.0;
+      } else if (y < 2.0) {
+        if (x < 1.0)      v = 12.0;
+        else if (x < 2.0) v =  4.0;
+        else if (x < 3.0) v = 14.0;
+        else               v =  6.0;
+      } else if (y < 3.0) {
+        if (x < 1.0)      v =  3.0;
+        else if (x < 2.0) v = 11.0;
+        else if (x < 3.0) v =  1.0;
+        else               v =  9.0;
+      } else {
+        if (x < 1.0)      v = 15.0;
+        else if (x < 2.0) v =  7.0;
+        else if (x < 3.0) v = 13.0;
+        else               v =  5.0;
+      }
+      return v / 16.0;
+    }
+
+    // Smooth noise
+    float hash(vec2 p) {
+      return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+    }
+    float noise(vec2 p) {
+      vec2 i = floor(p);
+      vec2 f = fract(p);
+      vec2 u = f * f * (3.0 - 2.0 * f);
+      return mix(
+        mix(hash(i), hash(i + vec2(1.0, 0.0)), u.x),
+        mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
+        u.y
+      );
+    }
+
+    void main() {
+      vec2 uv = gl_FragCoord.xy / u_resolution;
+      
+      // Warp distortion (matches shape="warp")
+      float t = u_time * u_speed;
+      vec2 warp = vec2(
+        noise(uv * 2.8 + vec2(t * 0.31, t * 0.17)),
+        noise(uv * 2.8 + vec2(t * 0.19, t * 0.41))
+      );
+      vec2 warped = uv + (warp - 0.5) * 0.45;
+      
+      // Value to dither
+      float val = noise(warped * 3.5 + t * 0.15);
+      val = val * val * 1.4; // boost contrast
+      val = clamp(val, 0.0, 1.0);
+      
+      // 4x4 Bayer threshold
+      float threshold = bayer4x4(gl_FragCoord.xy);
+      float dithered = step(threshold, val);
+      
+      // colorFront = #10BEB5 (r=0.926, g=0.306, b=0.008)
+      // colorBack = transparent
+      vec3 colorFront = vec3(0.063, 0.745, 0.710);
+      
+      if (dithered < 0.5) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 0.0);
+      } else {
+        gl_FragColor = vec4(colorFront, 1.0);
+      }
+    }
+  `;
+
+  function createShader(type, source) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      console.warn('CTA shader error:', gl.getShaderInfoLog(shader));
+      gl.deleteShader(shader);
+      return null;
+    }
+    return shader;
+  }
+
+  const vs = createShader(gl.VERTEX_SHADER, vsSource);
+  const fs = createShader(gl.FRAGMENT_SHADER, fsSource);
+  if (!vs || !fs) return;
+
+  const program = gl.createProgram();
+  gl.attachShader(program, vs);
+  gl.attachShader(program, fs);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+    console.warn('CTA program link error:', gl.getProgramInfoLog(program));
+    return;
+  }
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+
+  const posLoc = gl.getAttribLocation(program, 'a_position');
+  gl.enableVertexAttribArray(posLoc);
+  gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 0, 0);
+
+  const resLoc = gl.getUniformLocation(program, 'u_resolution');
+  const timeLoc = gl.getUniformLocation(program, 'u_time');
+  const speedLoc = gl.getUniformLocation(program, 'u_speed');
+
+  let speed = 0.2;
+  let isHovered = false;
+
+  const card = document.getElementById('ctaCard');
+  if (card) {
+    card.addEventListener('mouseenter', () => { isHovered = true; });
+    card.addEventListener('mouseleave', () => { isHovered = false; });
+  }
+
+  resize();
+  window.addEventListener('resize', resize);
+  if (typeof ResizeObserver !== 'undefined') {
+    new ResizeObserver(() => resize()).observe(canvas.parentElement);
+  }
+
+  function render(now) {
+    const t = now * 0.001;
+    speed += ((isHovered ? 0.35 : 0.2) - speed) * 0.04;
+
+    gl.useProgram(program);
+    gl.uniform2f(resLoc, canvas.width, canvas.height);
+    gl.uniform1f(timeLoc, t);
+    gl.uniform1f(speedLoc, speed);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+
 /* SCROLL REVEAL */
 const isMobile = window.innerWidth < 960;
 const io = new IntersectionObserver(entries => {
@@ -2238,8 +3618,6 @@ document.querySelectorAll(
   io.observe(el);
 });
 
-// Mobile fix: observe each .feat-card individually so cards animate
-// as they scroll into view, rather than waiting for the parent grid trigger
 if (isMobile) {
   const featCards = document.querySelectorAll('.features-grid .feat-card');
   const cardIo = new IntersectionObserver(entries => {
@@ -2252,8 +3630,10 @@ if (isMobile) {
   }, { threshold: 0, rootMargin: '0px 0px 80px 0px' });
   featCards.forEach(card => cardIo.observe(card));
 }
-const ctaSection = document.querySelector('.cta-section > div:last-child');
-if (ctaSection) { ctaSection.classList.add('reveal-cta'); io.observe(ctaSection); }
+
+// CTA card reveal
+const ctaWrap = document.getElementById('ctaCardWrap');
+if (ctaWrap) io.observe(ctaWrap);
 
 /* Counters */
 document.querySelectorAll('.hstat').forEach(stat => {
@@ -2446,11 +3826,448 @@ window.addEventListener('scroll', () => {
     resetTimer();
   }
 
-  // Hero carousel (prefix: "hero-")
   initCarousel('hero-');
-  // Use Cases section carousel (prefix: "")
   initCarousel('');
 })();
 </script>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   DOC 10: MESH GRADIENT SHADER (ShaderShowcase)
+   Renders two layered animated mesh-gradient canvases
+═══════════════════════════════════════════════════ */
+(function initMeshGradient(){
+  function setupCanvas(id, colors, speed, wireframe) {
+    const canvas = document.getElementById(id);
+    if (!canvas) return;
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return;
+
+    function resize() {
+      const parent = canvas.parentElement;
+      const w = parent ? parent.offsetWidth  : window.innerWidth;
+      const h = parent ? parent.offsetHeight : window.innerHeight;
+      canvas.width  = Math.max(w, 1);
+      canvas.height = Math.max(h, 1);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+    }
+    resize();
+    window.addEventListener('resize', resize);
+    // Also resize on next frame in case layout isn't settled yet
+    requestAnimationFrame(resize);
+
+    const vs = `attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0,1); }`;
+    const colorUniforms = colors.map((_,i) => `uniform vec3 u_c${i};`).join('\n');
+    const colorCount = colors.length;
+
+    const fs = `
+      precision mediump float;
+      uniform vec2 u_res;
+      uniform float u_time;
+      uniform float u_speed;
+      uniform int u_wire;
+      ${colorUniforms}
+
+      float hash21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+      float noise(vec2 p){
+        vec2 i=floor(p), f=fract(p), u=f*f*(3.0-2.0*f);
+        return mix(mix(hash21(i),hash21(i+vec2(1,0)),u.x),
+                   mix(hash21(i+vec2(0,1)),hash21(i+vec2(1,1)),u.x),u.y);
+      }
+
+      void main(){
+        vec2 uv = gl_FragCoord.xy / u_res;
+        float t = u_time * u_speed;
+
+        // Build gradient from color stops
+        vec3 col = u_c0;
+        float n1 = noise(uv*2.0 + vec2(t*0.3, t*0.2));
+        float n2 = noise(uv*3.0 + vec2(-t*0.15, t*0.35));
+        float n3 = noise(uv*1.5 + vec2(t*0.25, -t*0.1));
+        float n4 = noise(uv*4.0 + vec2(-t*0.2, -t*0.28));
+
+        col = mix(col, u_c1, n1 * 0.9);
+        col = mix(col, u_c2, n2 * 0.7);
+        col = mix(col, u_c3, n3 * 0.5);
+        if (${colorCount} > 4) { col = mix(col, u_c4, n4 * 0.4); }
+
+        if (u_wire == 1) {
+          // Wireframe grid lines
+          vec2 grid = fract(uv * 18.0 + vec2(t*0.05));
+          float line = step(0.94, grid.x) + step(0.94, grid.y);
+          col = mix(col, vec3(1.0), line * 0.35);
+        }
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `;
+
+    function mkShader(type, src) {
+      const s = gl.createShader(type);
+      gl.shaderSource(s, src); gl.compileShader(s); return s;
+    }
+    const prog = gl.createProgram();
+    gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, vs));
+    gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(prog);
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+    const aPos = gl.getAttribLocation(prog, 'a_pos');
+    gl.enableVertexAttribArray(aPos);
+    gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+    const uRes   = gl.getUniformLocation(prog, 'u_res');
+    const uTime  = gl.getUniformLocation(prog, 'u_time');
+    const uSpd   = gl.getUniformLocation(prog, 'u_speed');
+    const uWire  = gl.getUniformLocation(prog, 'u_wire');
+    const uColors = colors.map((_,i) => gl.getUniformLocation(prog, `u_c${i}`));
+
+    function hexToVec3(hex) {
+      const r = parseInt(hex.slice(1,3),16)/255;
+      const g = parseInt(hex.slice(3,5),16)/255;
+      const b = parseInt(hex.slice(5,7),16)/255;
+      return [r,g,b];
+    }
+    const colorVecs = colors.map(hexToVec3);
+
+    function render(now) {
+      const t = now * 0.001;
+      gl.useProgram(prog);
+      gl.uniform2f(uRes, canvas.width, canvas.height);
+      gl.uniform1f(uTime, t);
+      gl.uniform1f(uSpd, speed);
+      gl.uniform1i(uWire, wireframe ? 1 : 0);
+      colorVecs.forEach((c,i) => gl.uniform3fv(uColors[i], c));
+      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      requestAnimationFrame(render);
+    }
+    requestAnimationFrame(render);
+  }
+
+  setupCanvas('mesh-canvas',      ['#000000','#06b6d4','#0891b2','#164e63','#f97316'], 0.3, false);
+  setupCanvas('mesh-canvas-wire', ['#000000','#ffffff','#06b6d4','#f97316','#000000'], 0.2, true);
+})();
+
+/* ═══════════════════════════════════════════════════
+   DOC 7: ANIMATED CARD STACK
+═══════════════════════════════════════════════════ */
+(function initCardStack(){
+  const stage = document.getElementById('cardStackStage');
+  const btn   = document.getElementById('cardStackBtn');
+  if (!stage || !btn) return;
+
+  const cards = [
+    {
+      title: 'Load & Annotate',
+      desc:  'Canvas · SAM Wand · Polygon',
+      img:   'https://images.unsplash.com/photo-1518020382113-a7e8fc38eac9?w=600&q=80',
+    },
+    {
+      title: 'Convert Formats',
+      desc:  'YOLO · COCO · VOC · TFRecord',
+      img:   'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=600&q=80',
+    },
+    {
+      title: 'Augment Pipeline',
+      desc:  '30+ transforms · live preview',
+      img:   'https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=600&q=80',
+    },
+    {
+      title: 'Train Locally',
+      desc:  'YOLOv8–10 · RF-DETR · GPU monitor',
+      img:   'https://images.unsplash.com/photo-1465146344425-f00d5f5c8f07?w=600&q=80',
+    },
+    {
+      title: 'Export & Deploy',
+      desc:  'ONNX · TensorRT · Edge-ready',
+      img:   'https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?w=600&q=80',
+    },
+  ];
+
+  let current = 0;
+  let animating = false;
+
+  function buildCard(data, pos) {
+    const el = document.createElement('div');
+    el.className = 'stacked-card';
+    el.dataset.pos = pos;
+    el.innerHTML = `
+      <div class="sc-card-image"><img src="${data.img}" alt="${data.title}" loading="lazy"></div>
+      <div class="sc-card-footer">
+        <div class="sc-card-info">
+          <span class="sc-card-title">${data.title}</span>
+          <span class="sc-card-desc">${data.desc}</span>
+        </div>
+        <button class="sc-card-read">
+          View
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square"><path d="M9.5 18L15.5 12L9.5 6"/></svg>
+        </button>
+      </div>`;
+    return el;
+  }
+
+  // Render top 3 cards
+  function render() {
+    stage.innerHTML = '';
+    // pos 2 (back) rendered first so it's behind
+    for (let offset = 2; offset >= 0; offset--) {
+      const idx = (current + offset) % cards.length;
+      const el = buildCard(cards[idx], offset);
+      stage.appendChild(el);
+    }
+  }
+  render();
+
+  btn.addEventListener('click', () => {
+    if (animating) return;
+    animating = true;
+
+    // Grab the front card (pos=0) and animate it out
+    const front = stage.querySelector('[data-pos="0"]');
+    if (front) {
+      front.classList.add('exiting');
+    }
+    // Shift remaining cards up
+    stage.querySelectorAll('[data-pos="1"]').forEach(c => c.dataset.pos = '0');
+    stage.querySelectorAll('[data-pos="2"]').forEach(c => c.dataset.pos = '1');
+
+    setTimeout(() => {
+      current = (current + 1) % cards.length;
+      render();
+      animating = false;
+    }, 550);
+  });
+})();
+
+/* ═══════════════════════════════════════════════════
+   DOC 8: GLOW CARD SPOTLIGHT
+═══════════════════════════════════════════════════ */
+(function initGlowCards(){
+  const grid = document.getElementById('glowCardsGrid');
+  if (!grid) return;
+
+  document.addEventListener('pointermove', e => {
+    grid.querySelectorAll('.glow-card').forEach(card => {
+      const base   = parseFloat(card.dataset.base)   || 180;
+      const spread = parseFloat(card.dataset.spread)  || 60;
+      const xp = (e.clientX / window.innerWidth).toFixed(4);
+      const yp = (e.clientY / window.innerHeight).toFixed(4);
+      card.style.setProperty('--x',  e.clientX.toFixed(2));
+      card.style.setProperty('--y',  e.clientY.toFixed(2));
+      card.style.setProperty('--xp', xp);
+      card.style.setProperty('--yp', yp);
+      card.style.setProperty('--base',   base);
+      card.style.setProperty('--spread', spread);
+
+      // Update the radial gradients inline since background-attachment:fixed handles positioning
+      const hue = base + xp * spread;
+      card.style.backgroundImage = `radial-gradient(
+        var(--spotlight-size) var(--spotlight-size) at
+        calc(var(--x, 0) * 1px) calc(var(--y, 0) * 1px),
+        hsl(${hue} 100% 70% / 0.09), transparent
+      )`;
+    });
+  });
+})();
+
+/* ═══════════════════════════════════════════════════
+   DOC 9: NEBULA SHADER HERO (Hero component WebGL shader)
+   Faithful port of defaultShaderSource from the component
+═══════════════════════════════════════════════════ */
+(function initNebulaShader(){
+  const canvas = document.getElementById('nebula-canvas');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return;
+
+  function resize(){
+    const parent = canvas.parentElement;
+    const w = parent ? parent.offsetWidth  : window.innerWidth;
+    const h = parent ? parent.offsetHeight : window.innerHeight;
+    canvas.width  = Math.max(w, 1);
+    canvas.height = Math.max(h, 1);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const vs = `
+    attribute vec2 position;
+    void main(){ gl_Position = vec4(position, 0.0, 1.0); }
+  `;
+
+  // Ported from defaultShaderSource (WebGL1-compatible)
+  const fs = `
+    precision highp float;
+    uniform vec2 resolution;
+    uniform float time;
+
+    float rnd(vec2 p){
+      p=fract(p*vec2(12.9898,78.233));
+      p+=dot(p,p+34.56);
+      return fract(p.x*p.y);
+    }
+    float noise(vec2 p){
+      vec2 i=floor(p), f=fract(p), u=f*f*(3.0-2.0*f);
+      float a=rnd(i), b=rnd(i+vec2(1,0)), c=rnd(i+vec2(0,1)), d=rnd(i+1.0);
+      return mix(mix(a,b,u.x),mix(c,d,u.x),u.y);
+    }
+    float fbm(vec2 p){
+      float t=0.0, a=1.0;
+      mat2 m=mat2(1.0,-0.5,0.2,1.2);
+      for(int i=0;i<5;i++){ t+=a*noise(p); p*=2.0*m; a*=0.5; }
+      return t;
+    }
+    float clouds(vec2 p){
+      float d=1.0, t=0.0;
+      for(float i=0.0;i<3.0;i++){
+        float a=d*fbm(i*10.0+p.x*0.2+0.2*(1.0+i)*p.y+d+i*i+p);
+        t=mix(t,d,a); d=a; p*=2.0/(i+1.0);
+      }
+      return t;
+    }
+    void main(){
+      vec2 fc = gl_FragCoord.xy;
+      float mn = min(resolution.x, resolution.y);
+      vec2 uv = (fc - 0.5*resolution)/mn;
+      vec2 st = uv*vec2(2,1);
+      vec3 col = vec3(0);
+      float T = time;
+      float bg = clouds(vec2(st.x+T*0.5,-st.y));
+      uv *= 1.0-0.3*(sin(T*0.2)*0.5+0.5);
+      for(float i=1.0;i<12.0;i++){
+        uv += 0.1*cos(i*vec2(0.1+0.01*i,0.8)+i*i+T*0.5+0.1*uv.x);
+        vec2 p=uv; float d=length(p);
+        col += 0.00125/d*(cos(sin(i)*vec3(1,2,3))+1.0);
+        float b=noise(i+p+bg*1.731);
+        col += 0.002*b/length(max(p,vec2(b*p.x*0.02,p.y)));
+        col = mix(col,vec3(bg*0.25,bg*0.137,bg*0.05),d);
+      }
+      gl_FragColor = vec4(col, 1.0);
+    }
+  `;
+
+  function mkShader(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s,src); gl.compileShader(s); return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mkShader(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, mkShader(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog,'position');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos,2,gl.FLOAT,false,0,0);
+
+  const uRes  = gl.getUniformLocation(prog,'resolution');
+  const uTime = gl.getUniformLocation(prog,'time');
+
+  function render(now){
+    gl.useProgram(prog);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, now*0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP,0,4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+
+
+/* ═══════════════════════════════════════════════════
+   PULSING BORDER CANVAS (ShaderShowcase orbital badge)
+   Matches PulsingBorder from @paper-design/shaders-react
+═══════════════════════════════════════════════════ */
+(function initPulsingBorder(){
+  const canvas = document.getElementById('pulsing-border-canvas');
+  if (!canvas) return;
+  const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+  if (!gl) return;
+
+  function resize(){
+    const s = Math.max(canvas.offsetWidth || 56, 1);
+    canvas.width  = s;
+    canvas.height = s;
+    gl.viewport(0, 0, s, s);
+  }
+  // Delay resize until layout is done
+  requestAnimationFrame(() => { resize(); window.addEventListener('resize', resize); });
+
+  const vs = `attribute vec2 a_pos; void main(){ gl_Position=vec4(a_pos,0,1); }`;
+  const fs = `
+    precision mediump float;
+    uniform vec2 u_res;
+    uniform float u_time;
+    void main(){
+      vec2 uv = gl_FragCoord.xy / u_res;
+      vec2 c  = uv - 0.5;
+      float r = length(c);
+      float ring = smoothstep(0.42, 0.44, r) * smoothstep(0.5, 0.48, r);
+      float angle = atan(c.y, c.x) + u_time * 1.5;
+      vec3 col = vec3(0.0);
+      float w  = 0.0;
+      // 7 colour spots — no dynamic array indexing (GLSL ES 1.0)
+      for (int i = 0; i < 7; i++) {
+        float fi = float(i);
+        vec3 spotCol;
+        if      (i == 0) spotCol = vec3(0.024, 0.714, 0.831);
+        else if (i == 1) spotCol = vec3(0.034, 0.569, 0.698);
+        else if (i == 2) spotCol = vec3(0.976, 0.451, 0.086);
+        else if (i == 3) spotCol = vec3(0.000, 1.000, 0.533);
+        else if (i == 4) spotCol = vec3(1.000, 0.843, 0.000);
+        else if (i == 5) spotCol = vec3(1.000, 0.420, 0.208);
+        else              spotCol = vec3(1.000, 1.000, 1.000);
+        float a    = fi * 0.8976 + u_time * 0.8;
+        float d    = abs(sin((angle - a) * 0.5));
+        float spot = exp(-d * 18.0) * ring;
+        col += spotCol * spot;
+        w   += spot;
+      }
+      if (w > 0.001) col /= w;
+      float pulse  = 0.5 + 0.5 * sin(u_time * 3.0);
+      float glow   = smoothstep(0.38, 0.46, r) * smoothstep(0.55, 0.46, r) * pulse * 0.5;
+      vec3 glowCol = vec3(0.024, 0.714, 0.831);
+      gl_FragColor = vec4(col * ring + glowCol * glow, ring + glow);
+    }
+  `;
+
+  function mk(type, src){
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s); return s;
+  }
+  const prog = gl.createProgram();
+  gl.attachShader(prog, mk(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, mk(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+  const aPos = gl.getAttribLocation(prog, 'a_pos');
+  gl.enableVertexAttribArray(aPos);
+  gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+
+  const uRes  = gl.getUniformLocation(prog, 'u_res');
+  const uTime = gl.getUniformLocation(prog, 'u_time');
+
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+  function render(now){
+    gl.clearColor(0,0,0,0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(prog);
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform1f(uTime, now * 0.001);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(render);
+  }
+  requestAnimationFrame(render);
+})();
+
 </body>
 </html>

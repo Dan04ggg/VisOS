@@ -103,6 +103,9 @@ const PRETRAINED_CATALOG: Array<{
   { id: "yoloworld_l",  name: "YOLO-World L",     type: "yoloworld",    task: "zero-shot detection", sizeLabel: "~141 MB" },
   { id: "groundingdino_t", name: "GroundingDINO Tiny", type: "groundingdino", task: "zero-shot detection", sizeLabel: "~694 MB" },
   { id: "groundingdino_b", name: "GroundingDINO Base", type: "groundingdino", task: "zero-shot detection", sizeLabel: "~914 MB" },
+  { id: "owlvit_base_patch32",  name: "OWL-ViT Base (Patch32)",  type: "owlvit", task: "zero-shot detection", sizeLabel: "~590 MB" },
+  { id: "owlvit_base_patch16",  name: "OWL-ViT Base (Patch16)",  type: "owlvit", task: "zero-shot detection", sizeLabel: "~590 MB" },
+  { id: "owlvit_large_patch14", name: "OWL-ViT Large (Patch14)", type: "owlvit", task: "zero-shot detection", sizeLabel: "~1.6 GB" },
   // ── SAM 1 ────────────────────────────────────────────────────────────────────
   { id: "sam_vit_b",   name: "SAM ViT-B",         type: "sam",   task: "segmentation",       sizeLabel: "375 MB"  },
   { id: "sam_vit_l",   name: "SAM ViT-L",         type: "sam",   task: "segmentation",       sizeLabel: "1.2 GB"  },
