@@ -726,6 +726,55 @@ async def delete_classes_from_dataset(dataset_id: str, request: ClassDeleteReque
     }
 
 
+@app.post("/api/datasets/{dataset_id}/remove-unannotated")
+async def remove_unannotated_images(dataset_id: str):
+    """Remove all images that have no annotations from the dataset."""
+    if dataset_id not in active_datasets:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    dataset = active_datasets[dataset_id]
+    dataset_path = DATASETS_DIR / dataset_id
+    root = dataset_parser._find_dataset_root(dataset_path)
+    fmt = dataset["format"]
+
+    IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+    removed = 0
+
+    all_images = dataset_parser.get_images_with_annotations(dataset_path, fmt, page=1, limit=999999)
+    for img in all_images:
+        if img.get("annotations"):
+            continue
+        # Remove image file
+        img_path = root / img["path"]
+        if not img_path.exists():
+            img_path = dataset_path / img["path"]
+        if not img_path.exists():
+            # Last-resort: search by filename
+            matches = list(root.rglob(img["filename"]))
+            if matches:
+                img_path = matches[0]
+        if img_path.exists():
+            img_path.unlink()
+            removed += 1
+        # Remove corresponding label file for YOLO
+        if fmt in annotation_manager.YOLO_FORMATS:
+            for lbl_root in root.rglob("labels"):
+                if lbl_root.is_dir():
+                    lf = lbl_root / f"{img['id']}.txt"
+                    if lf.exists():
+                        lf.unlink()
+
+    # Invalidate cache and refresh metadata
+    if dataset_id in _images_cache:
+        del _images_cache[dataset_id]
+    dataset_info = dataset_parser.parse_dataset(dataset_path, fmt, dataset["name"])
+    dataset_info["id"] = dataset_id
+    active_datasets[dataset_id] = dataset_info
+    _save_dataset_metadata(dataset_id, dataset_info)
+
+    return {"success": True, "removed": removed, "updated_dataset": dataset_info}
+
+
 @app.post("/api/datasets/{dataset_id}/merge-classes")
 async def merge_classes_in_dataset(dataset_id: str, request: ClassMergeRequest):
     """Merge multiple classes into one"""
@@ -1326,6 +1375,17 @@ async def update_annotations(dataset_id: str, image_id: str, update: AnnotationU
             meta_path.write_text(_json2.dumps(meta, indent=2))
         except Exception:
             pass
+        # Move images from dataset root into images/ subdirectory for standard YOLO layout
+        _img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+        _images_dir = dataset_parser._find_dataset_root(dataset_path) / "images"
+        _images_dir.mkdir(exist_ok=True)
+        _root = dataset_parser._find_dataset_root(dataset_path)
+        for _f in list(_root.iterdir()):
+            if _f.is_file() and _f.suffix.lower() in _img_exts:
+                shutil.move(str(_f), _images_dir / _f.name)
+        # Invalidate cache so next image list fetch picks up new paths
+        if dataset_id in _images_cache:
+            del _images_cache[dataset_id]
 
     annotation_manager.update_annotations(
         dataset_path,
@@ -1636,6 +1696,16 @@ async def auto_annotate_text_batch(
                     meta_path.write_text(_json.dumps(meta, indent=2))
                 except Exception as _me:
                     print(f"[batch:{job_id}] failed to persist format upgrade: {_me}")
+                # Move images from root into images/ subdirectory
+                _img_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
+                _root_p = dataset_parser._find_dataset_root(dataset_path)
+                _imgs_dir = _root_p / "images"
+                _imgs_dir.mkdir(exist_ok=True)
+                for _f in list(_root_p.iterdir()):
+                    if _f.is_file() and _f.suffix.lower() in _img_exts:
+                        shutil.move(str(_f), _imgs_dir / _f.name)
+                if dataset_id in _images_cache:
+                    del _images_cache[dataset_id]
 
             # Collect all images in the dataset (deduplicate — on Windows both
             # *.jpg and *.JPG globs match the same file, doubling the count)

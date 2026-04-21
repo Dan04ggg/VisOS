@@ -151,6 +151,14 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   useEffect(() => { confidenceRef.current = confidence }, [confidence])
   // Sync localClasses when dataset changes
   useEffect(() => { setLocalClasses(selectedDataset?.classes || []) }, [selectedDataset?.id])
+  // If the dataset YAML has no class names, populate localClasses from the
+  // annotation data once images have loaded (availableClasses is derived from annotations)
+  useEffect(() => {
+    if (availableClasses.length > 0 && localClasses.length === 0) {
+      setLocalClasses(availableClasses)
+      setActiveClass(prev => prev || availableClasses[0] || '')
+    }
+  }, [availableClasses]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Clear all poll intervals on unmount ───────────────────────────────────────
   useEffect(() => {

@@ -5,15 +5,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Input } from '@/components/ui/input'
-import { Progress } from '@/components/ui/progress'
 import { 
   Shuffle,
   CheckCircle,
   AlertCircle,
   Loader2,
   FolderOpen,
-  Image,
-  ArrowRight
+  Image
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Dataset } from '@/app/page'
@@ -47,6 +45,21 @@ export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: Sp
   const [error, setError] = useState<string | null>(null)
   const [seed, setSeed] = useState(42)
   const [stratify, setStratify] = useState(true)
+  const [currentSplits, setCurrentSplits] = useState<Record<string, number> | null>(null)
+
+  useEffect(() => {
+    if (!selectedDataset) { setCurrentSplits(null); return }
+    fetch(`${apiUrl}/api/datasets/${selectedDataset.id}/stats`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.splits && Object.keys(data.splits).length > 0) {
+          setCurrentSplits(data.splits)
+        } else {
+          setCurrentSplits(null)
+        }
+      })
+      .catch(() => setCurrentSplits(null))
+  }, [selectedDataset?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Calculate counts based on percentages
   const totalImages = selectedDataset?.num_images || 0
@@ -149,7 +162,7 @@ export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: Sp
         </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
         {/* Source Dataset Info */}
         <Card>
           <CardHeader>
@@ -187,6 +200,37 @@ export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: Sp
             </div>
           </CardContent>
         </Card>
+
+        {/* Current Split Breakdown */}
+        {currentSplits && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Current Split</CardTitle>
+              <CardDescription>Existing train/val/test distribution in this dataset</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {Object.entries(currentSplits).map(([split, count]) => {
+                  const total = Object.values(currentSplits).reduce((a, b) => a + b, 0)
+                  const pct = total > 0 ? Math.round((count / total) * 100) : 0
+                  const color = split === 'train' ? 'bg-primary' : split === 'val' || split === 'valid' ? 'bg-amber-500' : 'bg-blue-500'
+                  const textColor = split === 'train' ? 'text-primary' : split === 'val' || split === 'valid' ? 'text-amber-500' : 'text-blue-500'
+                  return (
+                    <div key={split} className="space-y-1">
+                      <div className="flex justify-between text-sm">
+                        <span className="capitalize font-medium">{split}</span>
+                        <span className={cn('font-medium', textColor)}>{count} images ({pct}%)</span>
+                      </div>
+                      <div className="h-2 bg-secondary rounded-full overflow-hidden">
+                        <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Split Configuration */}
         <Card>

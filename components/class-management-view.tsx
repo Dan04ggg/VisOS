@@ -17,7 +17,8 @@ import {
   ArrowRight,
   Search,
   RefreshCw,
-  Pencil
+  Pencil,
+  ImageMinus
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Dataset } from '@/app/page'
@@ -53,7 +54,7 @@ export function ClassManagementView({
   const [classes, setClasses] = useState<ClassInfo[]>([])
   const [loading, setLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [activeTab, setActiveTab] = useState<'extract' | 'delete' | 'merge' | 'add' | 'rename'>('extract')
+  const [activeTab, setActiveTab] = useState<'extract' | 'delete' | 'merge' | 'add' | 'rename' | 'remove-unannotated'>('extract')
   const [newClassName, setNewClassName] = useState('')
   const [mergeTargetName, setMergeTargetName] = useState('')
   const [extractOutputName, setExtractOutputName] = useState('')
@@ -318,6 +319,33 @@ export function ClassManagementView({
     setLoading(false)
   }
 
+  const handleRemoveUnannotated = async () => {
+    if (!selectedDataset) return
+    setLoading(true)
+    setMessage(null)
+    try {
+      const response = await fetch(`${apiUrl}/api/datasets/${selectedDataset.id}/remove-unannotated`, {
+        method: 'POST',
+      })
+      if (response.ok) {
+        const data = await response.json()
+        if (data.updated_dataset) {
+          setDatasets(datasets.map(d =>
+            d.id === selectedDataset.id ? data.updated_dataset : d
+          ))
+        }
+        setMessage({ type: 'success', text: `Removed ${data.removed} unannotated image(s)` })
+        loadClasses()
+      } else {
+        const body = await response.json().catch(() => ({}))
+        throw new Error(body.detail || 'Failed to remove unannotated images')
+      }
+    } catch (err) {
+      setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Failed to remove unannotated images' })
+    }
+    setLoading(false)
+  }
+
   if (!selectedDataset) {
     return (
       <div className="h-full flex flex-col items-center justify-center p-6 text-center">
@@ -414,7 +442,7 @@ export function ClassManagementView({
 
         <div className="flex-1 overflow-y-auto">
           <div className="flex flex-wrap gap-2 mb-4">
-            {(['extract', 'delete', 'merge', 'rename', 'add'] as const).map((tab) => (
+            {(['extract', 'delete', 'merge', 'rename', 'add', 'remove-unannotated'] as const).map((tab) => (
               <Button
                 key={tab}
                 variant={activeTab === tab ? 'default' : 'outline'}
@@ -426,7 +454,8 @@ export function ClassManagementView({
                 {tab === 'merge' && <GitMerge className="w-4 h-4 mr-2" />}
                 {tab === 'rename' && <Pencil className="w-4 h-4 mr-2" />}
                 {tab === 'add' && <Plus className="w-4 h-4 mr-2" />}
-                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                {tab === 'remove-unannotated' && <ImageMinus className="w-4 h-4 mr-2" />}
+                {tab === 'remove-unannotated' ? 'Remove Unannotated' : tab.charAt(0).toUpperCase() + tab.slice(1)}
               </Button>
             ))}
           </div>
@@ -675,7 +704,7 @@ export function ClassManagementView({
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Class Name</Label>
-                  <Input 
+                  <Input
                     value={newClassName}
                     onChange={(e) => setNewClassName(e.target.value)}
                     placeholder="Enter new class name"
@@ -683,13 +712,54 @@ export function ClassManagementView({
                   />
                 </div>
 
-                <Button 
-                  onClick={handleAddClass} 
+                <Button
+                  onClick={handleAddClass}
                   disabled={loading || !newClassName.trim()}
                   className="w-full"
                 >
                   {loading ? 'Adding...' : 'Add Class'}
                   <Plus className="w-4 h-4 ml-2" />
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {activeTab === 'remove-unannotated' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ImageMinus className="w-5 h-5 text-destructive" />
+                  Remove Unannotated Images
+                </CardTitle>
+                <CardDescription>
+                  Permanently delete all images that have no annotations from this dataset
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-destructive">Warning</p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        This will permanently delete every image file that has zero annotations.
+                        Label files for those images are also removed. This action cannot be undone.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Use this to clean up a dataset after deleting classes or to remove images
+                  that were never annotated before training.
+                </p>
+                <Button
+                  variant="destructive"
+                  onClick={handleRemoveUnannotated}
+                  disabled={loading}
+                  className="w-full"
+                >
+                  {loading ? 'Removing...' : 'Remove Unannotated Images'}
+                  <ImageMinus className="w-4 h-4 ml-2" />
                 </Button>
               </CardContent>
             </Card>

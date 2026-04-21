@@ -299,6 +299,12 @@ Click the edit icon next to any class name, type the new name, and press Enter.
 
 Click **+ Add Class**, enter a name, and optionally set a colour. The class is immediately available in the annotation tools.
 
+### Remove Unannotated Images
+
+Click the **Remove Unannotated** tab in Class Management to permanently delete every image that has zero annotations. This is useful after deleting classes (which may leave behind images with no remaining labels) or to clean up a partially-annotated dataset before training.
+
+> **Warning:** this action permanently removes image files from disk and cannot be undone. Take a snapshot first if you need a recovery point.
+
 ---
 
 ## Data Augmentation
@@ -431,6 +437,10 @@ The **Train / Val / Test** view creates train/validation/test splits from a sing
 5. Enter an output name
 6. Click **Split**
 
+### Current Split Display
+
+If the selected dataset already has a train/val/test structure, the **Current Split** card shows the existing image counts and percentages per split. This lets you verify the current distribution before creating a new split.
+
 ### Stratified Splitting
 
 When enabled, each split preserves the class proportions of the original dataset. Example: if the source is 60% cats and 40% dogs, each of train/val/test will be approximately 60/40.
@@ -448,6 +458,19 @@ When enabled, each split preserves the class proportions of the original dataset
    - Output name
    - Copy images alongside annotations, or annotations only
 5. Click **Convert** — a new dataset appears in the list
+
+### YOLO Output Structure
+
+Converted YOLO datasets always use the standard two-folder layout:
+
+```
+dataset/
+  images/   ← all image files
+  labels/   ← YOLO .txt annotation files
+  data.yaml
+```
+
+When raw images (uploaded without annotations) are first annotated inside the tool they are automatically promoted to YOLO format and reorganised into this `images/` + `labels/` structure.
 
 ### Supported Conversions
 

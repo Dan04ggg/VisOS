@@ -84,7 +84,7 @@ Full undo/redo. Annotations save automatically.
 
 ### Class Management
 
-Extract, delete, merge, or rename classes without touching JSON. Shows per-class annotation counts.
+Extract, delete, merge, rename, or add classes without touching JSON. Shows per-class annotation counts. The **Remove Unannotated** action deletes every image with zero annotations in one click — useful after class deletions or before training.
 
 ![Class management table with counts, colour swatches, and bulk operation checkboxes](assets/images/class_management.png)
 
@@ -100,7 +100,7 @@ Convert any supported format to any other. Optionally copy images alongside anno
 
 ### Train / Val / Test Split
 
-Dedicated split view with configurable ratios, optional stratification by class, and a fixed random seed for reproducibility.
+Dedicated split view with configurable ratios, optional stratification by class, and a fixed random seed for reproducibility. Shows the **existing split distribution** of the dataset so you can see the current train/val/test breakdown before creating a new one.
 
 ---
 
