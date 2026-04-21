@@ -78,7 +78,7 @@ Canvas-based editor with six tools:
 
 Full undo/redo. Annotations save automatically.
 
-**Auto-annotation:** load any YOLO, RT-DETR, RF-DETR, SAM, SAM 2/2.1/3, or GroundingDINO model and run inference directly on your dataset with a configurable confidence threshold. GroundingDINO supports zero-shot annotation via text prompt.
+**Auto-annotation:** load any YOLO, RT-DETR, RF-DETR, SAM, SAM 2/2.1/3, GroundingDINO, or OWL-ViT model and run inference directly on your dataset with a configurable confidence threshold. GroundingDINO and OWL-ViT support zero-shot annotation via text prompt.
 
 ---
 
@@ -155,7 +155,7 @@ Combine multiple datasets with a class-mapping UI to resolve naming conflicts be
 Download pretrained weights from inside the app or import your own `.pt`, `.pth`, or `.onnx` file. Load and unload models to manage GPU memory.
 
 **Available pretrained models:**  
-YOLOv5 (n/s) · YOLOv8 (n/s/m/l/x, seg, cls variants) · YOLOv9 (n/s/m/c/e) · YOLOv10 (n/s/m/b/l/x) · RT-DETR (L/X) · RF-DETR (Base/Large) · SAM ViT-B/L · SAM 2 (Tiny/Small/Base+/Large) · SAM 2.1 (Tiny/Small/Base+/Large) · SAM 3 · GroundingDINO (Tiny/Base, zero-shot)
+YOLOv5 (n/s) · YOLOv8 (n/s/m/l/x, seg, cls variants) · YOLOv9 (n/s/m/c/e) · YOLOv10 (n/s/m/b/l/x) · RT-DETR (L/X) · RF-DETR (Base/Large) · SAM ViT-B/L · SAM 2 (Tiny/Small/Base+/Large) · SAM 2.1 (Tiny/Small/Base+/Large) · SAM 3 · GroundingDINO (Tiny/Base, zero-shot) · OWL-ViT (Base/Large, zero-shot)
 
 ![Model management view with download and import options, loaded model shown with GPU memory usage](assets/images/model_management.png)
 
