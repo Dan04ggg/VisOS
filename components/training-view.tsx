@@ -137,9 +137,14 @@ const MODEL_ARCHITECTURES: Array<{ value: string; label: string; params: string;
   { value: "yolo12m",      label: "YOLO12 Medium",     params: "20.2M", taskType: "detection",      arch: "YOLO" },
   { value: "yolo12l",      label: "YOLO12 Large",      params: "26.4M", taskType: "detection",      arch: "YOLO" },
   { value: "yolo12x",      label: "YOLO12 XLarge",     params: "59.1M", taskType: "detection",      arch: "YOLO" },
-  // ── RT-DETR — detection (Ultralytics) ────────────────────────────────────────
-  { value: "rtdetr-l",     label: "RT-DETR Large",     params: "32M",   taskType: "detection",      arch: "RT-DETR" },
-  { value: "rtdetr-x",     label: "RT-DETR XLarge",    params: "67M",   taskType: "detection",      arch: "RT-DETR" },
+  // ── RT-DETR v1 — detection (Ultralytics) ─────────────────────────────────────
+  { value: "rtdetr-l",        label: "RT-DETR Large",          params: "32M",  taskType: "detection", arch: "RT-DETR" },
+  { value: "rtdetr-x",        label: "RT-DETR XLarge",         params: "67M",  taskType: "detection", arch: "RT-DETR" },
+  // ── RT-DETRv2 — detection (HuggingFace / PekingU) ────────────────────────────
+  { value: "rtdetrv2_r18vd",  label: "RT-DETRv2 R18 (Small)",  params: "20M",  taskType: "detection", arch: "RT-DETRv2" },
+  { value: "rtdetrv2_r34vd",  label: "RT-DETRv2 R34 (Medium)", params: "31M",  taskType: "detection", arch: "RT-DETRv2" },
+  { value: "rtdetrv2_r50vd",  label: "RT-DETRv2 R50 (Large)",  params: "42M",  taskType: "detection", arch: "RT-DETRv2" },
+  { value: "rtdetrv2_r101vd", label: "RT-DETRv2 R101 (XLarge)",params: "76M",  taskType: "detection", arch: "RT-DETRv2" },
   // ── RF-DETR — detection (Roboflow) ───────────────────────────────────────────
   { value: "rfdetr_base",  label: "RF-DETR Base",      params: "29M",   taskType: "detection",      arch: "RF-DETR" },
   { value: "rfdetr_large", label: "RF-DETR Large",     params: "128M",  taskType: "detection",      arch: "RF-DETR" },
@@ -147,8 +152,9 @@ const MODEL_ARCHITECTURES: Array<{ value: string; label: string; params: string;
 
 /** Derive the backend model_type from the selected architecture value. */
 function getModelType(archValue: string): string {
-  if (archValue.startsWith("rtdetr")) return "rtdetr"
-  if (archValue.startsWith("rfdetr")) return "rfdetr"
+  if (archValue.startsWith("rtdetrv2")) return "rtdetrv2"
+  if (archValue.startsWith("rtdetr"))   return "rtdetr"
+  if (archValue.startsWith("rfdetr"))   return "rfdetr"
   if (archValue.includes("-seg"))     return "segmentation"
   if (archValue.includes("-cls"))     return "classification"
   return "yolo"

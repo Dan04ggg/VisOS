@@ -83,9 +83,14 @@ class ModelManager:
         {"id": "yolo12m",  "name": "YOLO12 Medium", "type": "yolo", "pretrained": True},
         {"id": "yolo12l",  "name": "YOLO12 Large",  "type": "yolo", "pretrained": True},
         {"id": "yolo12x",  "name": "YOLO12 XLarge", "type": "yolo", "pretrained": True},
-        # RT-DETR (ultralytics)
-        {"id": "rtdetr-l", "name": "RT-DETR Large",  "type": "rtdetr", "pretrained": True},
-        {"id": "rtdetr-x", "name": "RT-DETR XLarge", "type": "rtdetr", "pretrained": True},
+        # RT-DETR v1 (ultralytics)
+        {"id": "rtdetr-l",        "name": "RT-DETR Large",       "type": "rtdetr",   "pretrained": True},
+        {"id": "rtdetr-x",        "name": "RT-DETR XLarge",      "type": "rtdetr",   "pretrained": True},
+        # RT-DETRv2 (HuggingFace transformers — PekingU)
+        {"id": "rtdetrv2_r18vd",  "name": "RT-DETRv2 R18 (Small)",  "type": "rtdetrv2", "pretrained": True},
+        {"id": "rtdetrv2_r34vd",  "name": "RT-DETRv2 R34 (Medium)", "type": "rtdetrv2", "pretrained": True},
+        {"id": "rtdetrv2_r50vd",  "name": "RT-DETRv2 R50 (Large)",  "type": "rtdetrv2", "pretrained": True},
+        {"id": "rtdetrv2_r101vd", "name": "RT-DETRv2 R101 (XLarge)","type": "rtdetrv2", "pretrained": True},
         {"id": "sam_vit_b",   "name": "SAM Base",      "type": "sam",   "pretrained": True},
         {"id": "sam_vit_l",   "name": "SAM Large",     "type": "sam",   "pretrained": True},
         {"id": "sam2_tiny",   "name": "SAM 2 Tiny",    "type": "sam2",  "pretrained": True},
@@ -179,6 +184,7 @@ class ModelManager:
             _hf_model_maps = [
                 (self._GROUNDINGDINO_HF_IDS, "groundingdino"),
                 (self._OWLVIT_HF_IDS, "owlvit"),
+                (self._RTDETRV2_HF_IDS, "rtdetrv2"),
             ]
             for hf_ids_dict, mtype in _hf_model_maps:
                 for model_id, hf_id in hf_ids_dict.items():
@@ -294,6 +300,8 @@ class ModelManager:
                 model_info = self._load_pretrained_groundingdino(model_name, model_info)
             elif model_type == "owlvit":
                 model_info = self._load_pretrained_owlvit(model_name, model_info)
+            elif model_type == "rtdetrv2":
+                model_info = self._load_pretrained_rtdetrv2(model_name, model_info)
         except Exception as e:
             model_info["error"] = str(e)
         self.loaded_models[model_id] = model_info
@@ -369,9 +377,9 @@ class ModelManager:
         "yolo12m":  ("yolo12m.pt",  f"{_BASE}/yolo12m.pt"),
         "yolo12l":  ("yolo12l.pt",  f"{_BASE}/yolo12l.pt"),
         "yolo12x":  ("yolo12x.pt",  f"{_BASE}/yolo12x.pt"),
-        # RT-DETR (ultralytics)
-        "rtdetr-l": ("rtdetr-l.pt", f"{_BASE}/rtdetr-l.pt"),
-        "rtdetr-x": ("rtdetr-x.pt", f"{_BASE}/rtdetr-x.pt"),
+        # RT-DETR v1 — hosted at v0.0.0, not the newer YOLO11/12 release tag
+        "rtdetr-l":   ("rtdetr-l.pt",   "https://github.com/ultralytics/assets/releases/download/v0.0.0/rtdetr-l.pt"),
+        "rtdetr-x":   ("rtdetr-x.pt",   "https://github.com/ultralytics/assets/releases/download/v0.0.0/rtdetr-x.pt"),
         # YOLO-World v2 — zero-shot open-vocabulary detection
         "yoloworld_s": ("yolov8s-worldv2.pt", f"{_BASE}/yolov8s-worldv2.pt"),
         "yoloworld_m": ("yolov8m-worldv2.pt", f"{_BASE}/yolov8m-worldv2.pt"),
@@ -383,6 +391,14 @@ class ModelManager:
     _RFDETR_FILENAMES = {
         "rfdetr_base":  "rf-detr-base.pth",
         "rfdetr_large": "rf-detr-large.pth",
+    }
+
+    # RT-DETRv2 HuggingFace model IDs (PekingU organization)
+    _RTDETRV2_HF_IDS = {
+        "rtdetrv2_r18vd":  "PekingU/rtdetrv2_r18vd",
+        "rtdetrv2_r34vd":  "PekingU/rtdetrv2_r34vd",
+        "rtdetrv2_r50vd":  "PekingU/rtdetrv2_r50vd",
+        "rtdetrv2_r101vd": "PekingU/rtdetrv2_r101vd",
     }
 
     # GroundingDINO HuggingFace model IDs (downloaded on first use via transformers)
@@ -690,6 +706,73 @@ class ModelManager:
             model_info["classes"] = []  # zero-shot: classes set via text prompt
             model_info["loaded"] = True
             model_info["path"] = str(local_path)
+        except Exception as e:
+            model_info["error"] = str(e)
+            model_info["loaded"] = False
+        return model_info
+
+    def _load_pretrained_rtdetrv2(self, model_name: str, model_info: Dict) -> Dict:
+        """Load RT-DETRv2 via HuggingFace transformers (PekingU pretrained weights)."""
+        import sys, subprocess
+        try:
+            from training import _VENV_SYSPATH
+            for p in _VENV_SYSPATH:
+                if p not in sys.path:
+                    sys.path.insert(0, p)
+        except ImportError:
+            pass
+
+        hf_id = self._RTDETRV2_HF_IDS.get(model_name)
+        if hf_id is None:
+            model_info["error"] = f"Unknown RT-DETRv2 model: {model_name}"
+            model_info["loaded"] = False
+            return model_info
+
+        try:
+            from transformers import AutoImageProcessor, AutoModelForObjectDetection
+        except ImportError:
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "transformers", "-q"], timeout=300
+                )
+                from transformers import AutoImageProcessor, AutoModelForObjectDetection
+            except Exception as e:
+                model_info["error"] = f"Failed to install transformers: {e}"
+                model_info["loaded"] = False
+                return model_info
+
+        try:
+            import os
+            local_model_dir = self.models_dir / "hf_cache" / hf_id.replace("/", "--")
+            local_model_dir.mkdir(parents=True, exist_ok=True)
+            local_dir_str = str(local_model_dir)
+
+            try:
+                from huggingface_hub import snapshot_download
+                snapshot_download(hf_id, local_dir=local_dir_str, local_dir_use_symlinks=False)
+                load_path = local_dir_str
+            except TypeError:
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            except Exception:
+                load_path = hf_id
+                os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+
+            processor = AutoImageProcessor.from_pretrained(load_path)
+            model = AutoModelForObjectDetection.from_pretrained(load_path)
+            model._rtdetrv2_processor = processor
+            try:
+                import torch
+                device = self._get_device()
+                if device != "cpu":
+                    model = model.to(f"cuda:{device}" if isinstance(device, int) else device)
+            except Exception:
+                pass
+            # Store class names from COCO pretrain (80 classes)
+            id2label = getattr(model.config, "id2label", {})
+            model_info["model"] = model
+            model_info["classes"] = [id2label.get(i, str(i)) for i in sorted(id2label.keys())] if id2label else []
+            model_info["loaded"] = True
         except Exception as e:
             model_info["error"] = str(e)
             model_info["loaded"] = False
@@ -1184,7 +1267,7 @@ class ModelManager:
         annotations = []
         device = self._get_device()
 
-        if model_type == "yolo":
+        if model_type in ("yolo", "rtdetr"):
             results = model(str(image_path), conf=confidence_threshold, device=device, verbose=False)
 
             for result in results:
@@ -1618,6 +1701,39 @@ class ModelManager:
             except Exception as e:
                 import traceback; traceback.print_exc()
                 raise RuntimeError(f"OWL-ViT inference failed: {e}") from e
+
+        elif model_type == "rtdetrv2":
+            try:
+                import torch
+                processor = getattr(model, "_rtdetrv2_processor", None)
+                if processor is None:
+                    raise RuntimeError("RT-DETRv2 processor not attached to model")
+                image = Image.open(image_path).convert("RGB")
+                inputs = processor(images=image, return_tensors="pt")
+                model_device = next(model.parameters()).device
+                inputs = {k: v.to(model_device) if hasattr(v, "to") else v for k, v in inputs.items()}
+                with torch.no_grad():
+                    outputs = model(**inputs)
+                target_sizes = torch.tensor([[image.size[1], image.size[0]]])
+                results = processor.post_process_object_detection(
+                    outputs, threshold=confidence_threshold, target_sizes=target_sizes
+                )[0]
+                id2label = getattr(model.config, "id2label", {})
+                for score, label_id, box in zip(results["scores"], results["labels"], results["boxes"]):
+                    score_val = float(score)
+                    cls_id = int(label_id)
+                    cls_name = id2label.get(cls_id, str(cls_id))
+                    x1, y1, x2, y2 = [float(v) for v in box.tolist()]
+                    annotations.append({
+                        "type": "bbox",
+                        "class_id": cls_id,
+                        "class_name": cls_name,
+                        "confidence": score_val,
+                        "bbox": [x1, y1, x2 - x1, y2 - y1],
+                    })
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                raise RuntimeError(f"RT-DETRv2 inference failed: {e}") from e
 
         return annotations
 

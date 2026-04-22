@@ -2441,18 +2441,27 @@ def _resolve_base_model(model_arch: str, model_type: str) -> str:
     # RF-DETR arches are passed through as-is (no .pt extension)
     if model_type == "rfdetr":
         return arch  # e.g. "rfdetr_base" or "rfdetr_large"
+    # RT-DETRv2 (HuggingFace) — catalog ID passed directly (e.g. "rtdetrv2_r50vd")
+    if model_type == "rtdetrv2":
+        return arch
     # RT-DETR (ultralytics) — strip .pt and reattach
     if model_type == "rtdetr":
         base = arch.replace(".pt", "")
-        return f"{base}.pt"  # e.g. "rtdetr-l.pt"
-    # Strip any existing suffix variants so we can reattach cleanly
-    base = arch.replace("-seg", "").replace("-cls", "").replace(".pt", "")
-    if model_type == "segmentation":
-        filename = f"{base}-seg.pt"
-    elif model_type == "classification":
-        filename = f"{base}-cls.pt"
+        filename = f"{base}.pt"  # e.g. "rtdetr-l.pt" or "rtdetrv2-m.pt"
     else:
-        filename = f"{base}.pt"
+        # Strip any existing suffix variants so we can reattach cleanly
+        base = arch.replace("-seg", "").replace("-cls", "").replace(".pt", "")
+        if model_type == "segmentation":
+            filename = f"{base}-seg.pt"
+        elif model_type == "classification":
+            filename = f"{base}-cls.pt"
+        else:
+            filename = f"{base}.pt"
+    # If the model file was already downloaded to workspace/models/, return its
+    # absolute path so training doesn't try to resolve a bare filename from cwd.
+    local_path = MODELS_DIR / filename
+    if local_path.exists():
+        return str(local_path)
     return filename
 
 
@@ -2557,6 +2566,7 @@ async def start_training(config: TrainingConfig, background_tasks: BackgroundTas
             "pretrained": config.pretrained,
             "device": config.device,
             "base_model": _resolve_base_model(config.model_arch, config.model_type),
+            "models_dir": str(MODELS_DIR),
             # Advanced hyperparams forwarded for all model types
             "lr0": config.lr0,
             "lrf": config.lrf,

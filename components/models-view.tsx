@@ -91,9 +91,14 @@ const PRETRAINED_CATALOG: Array<{
   { id: "yolo12m",     name: "YOLO12 Medium",     type: "yolo",  task: "detection",          sizeLabel: "40 MB"   },
   { id: "yolo12l",     name: "YOLO12 Large",      type: "yolo",  task: "detection",          sizeLabel: "51 MB"   },
   { id: "yolo12x",     name: "YOLO12 XLarge",     type: "yolo",  task: "detection",          sizeLabel: "114 MB"  },
-  // ── RT-DETR (Ultralytics) ────────────────────────────────────────────────────
-  { id: "rtdetr-l",    name: "RT-DETR Large",     type: "rtdetr", task: "detection",         sizeLabel: "~65 MB"  },
-  { id: "rtdetr-x",    name: "RT-DETR XLarge",    type: "rtdetr", task: "detection",         sizeLabel: "~135 MB" },
+  // ── RT-DETR v1 (Ultralytics) ─────────────────────────────────────────────────
+  { id: "rtdetr-l",         name: "RT-DETR Large",          type: "rtdetr",   task: "detection", sizeLabel: "~65 MB"  },
+  { id: "rtdetr-x",         name: "RT-DETR XLarge",         type: "rtdetr",   task: "detection", sizeLabel: "~135 MB" },
+  // ── RT-DETRv2 (HuggingFace / PekingU) ───────────────────────────────────────
+  { id: "rtdetrv2_r18vd",   name: "RT-DETRv2 R18 (Small)",  type: "rtdetrv2", task: "detection", sizeLabel: "~100 MB" },
+  { id: "rtdetrv2_r34vd",   name: "RT-DETRv2 R34 (Medium)", type: "rtdetrv2", task: "detection", sizeLabel: "~135 MB" },
+  { id: "rtdetrv2_r50vd",   name: "RT-DETRv2 R50 (Large)",  type: "rtdetrv2", task: "detection", sizeLabel: "~170 MB" },
+  { id: "rtdetrv2_r101vd",  name: "RT-DETRv2 R101 (XLarge)", type: "rtdetrv2", task: "detection", sizeLabel: "~305 MB" },
   // ── RF-DETR (Roboflow) ───────────────────────────────────────────────────────
   { id: "rfdetr_base",  name: "RF-DETR Base",     type: "rfdetr", task: "detection",         sizeLabel: "~160 MB" },
   { id: "rfdetr_large", name: "RF-DETR Large",    type: "rfdetr", task: "detection",         sizeLabel: "~500 MB" },

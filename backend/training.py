@@ -383,6 +383,8 @@ class TrainingManager:
             elif mt == "rtdetr":
                 # RT-DETR from ultralytics is trained via the YOLO class
                 self._train_yolo(job)
+            elif mt == "rtdetrv2":
+                self._train_rtdetrv2(job)
             else:
                 # "yolo" — may need seg→bbox conversion if dataset has polygon labels
                 self._train_yolo(job)
@@ -779,6 +781,234 @@ class TrainingManager:
             job["logs"].append(f"[Seg→BBox] Failed to write data.yaml: {e}")
             return None
 
+    # ── RT-DETRv2 (HuggingFace transformers) ─────────────────────────────────
+
+    def _train_rtdetrv2(self, job: Dict):
+        """Fine-tune RT-DETRv2 using HuggingFace transformers."""
+        import sys, subprocess
+
+        try:
+            import torch
+            from transformers import AutoImageProcessor, AutoModelForObjectDetection
+        except ImportError:
+            job["logs"].append("Installing transformers…")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "transformers", "-q"])
+            import torch
+            from transformers import AutoImageProcessor, AutoModelForObjectDetection
+
+        try:
+            import yaml as _yaml
+            from PIL import Image as _Image
+            from torch.utils.data import Dataset as _Dataset, DataLoader as _DataLoader
+            import torch.optim as _optim
+        except ImportError as e:
+            job["status"] = "failed"
+            job["error"] = f"Missing dependency: {e}"
+            job["logs"].append(f"✗ {job['error']}")
+            return
+
+        config = job["config"]
+        dataset_path = Path(job["dataset_path"])
+
+        _RTDETRV2_HF = {
+            "rtdetrv2_r18vd":  "PekingU/rtdetrv2_r18vd",
+            "rtdetrv2_r34vd":  "PekingU/rtdetrv2_r34vd",
+            "rtdetrv2_r50vd":  "PekingU/rtdetrv2_r50vd",
+            "rtdetrv2_r101vd": "PekingU/rtdetrv2_r101vd",
+        }
+
+        arch = config.get("base_model", "rtdetrv2_r50vd")
+        hf_id = _RTDETRV2_HF.get(arch, arch)
+
+        job["logs"].append("Scanning dataset…")
+        data_yaml = self._find_yaml(dataset_path, job)
+        if not data_yaml:
+            return
+
+        with open(data_yaml) as f:
+            data_config = _yaml.safe_load(f)
+        names = data_config.get("names", [])
+        if isinstance(names, dict):
+            id2label = {int(k): v for k, v in names.items()}
+        else:
+            id2label = {i: n for i, n in enumerate(names)}
+        label2id = {v: k for k, v in id2label.items()}
+        num_classes = len(id2label)
+
+        job["logs"].append(f"Classes ({num_classes}): {list(id2label.values())}")
+        job["logs"].append(f"Loading model: {hf_id}")
+        job["status"] = "running"
+
+        device = _resolve_device(config, job)
+        device_str = f"cuda:{device}" if isinstance(device, int) else str(device)
+
+        try:
+            processor = AutoImageProcessor.from_pretrained(hf_id)
+            model = AutoModelForObjectDetection.from_pretrained(
+                hf_id, id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True,
+            )
+            model = model.to(device_str)
+        except Exception as e:
+            job["status"] = "failed"
+            job["error"] = f"Failed to load {hf_id}: {e}. Download the model from the Models page first."
+            job["logs"].append(f"✗ {job['error']}")
+            return
+
+        # ── Dataset ────────────────────────────────────────────────────────────
+
+        class _YOLODataset(_Dataset):
+            def __init__(self, split_dir, processor):
+                self.processor = processor
+                img_dir = Path(split_dir) / "images"
+                lbl_dir = Path(split_dir) / "labels"
+                if not img_dir.exists():
+                    img_dir = Path(split_dir)
+                    lbl_dir = Path(split_dir)
+                self.img_dir = img_dir
+                self.lbl_dir = lbl_dir
+                self.files = sorted([
+                    f for f in img_dir.glob("*")
+                    if f.suffix.lower() in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+                ])
+
+            def __len__(self):
+                return len(self.files)
+
+            def __getitem__(self, idx):
+                img_path = self.files[idx]
+                lbl_path = self.lbl_dir / (img_path.stem + ".txt")
+                image = _Image.open(img_path).convert("RGB")
+                w, h = image.size
+                coco_annotations = []
+                if lbl_path.exists():
+                    with open(lbl_path) as f:
+                        for i, line in enumerate(f):
+                            parts = line.strip().split()
+                            if len(parts) < 5:
+                                continue
+                            cls_id = int(float(parts[0]))
+                            cx, cy, bw, bh = (float(parts[1]), float(parts[2]),
+                                              float(parts[3]), float(parts[4]))
+                            x = (cx - bw / 2) * w
+                            y = (cy - bh / 2) * h
+                            coco_annotations.append({
+                                "image_id": idx, "id": i, "category_id": cls_id,
+                                "bbox": [x, y, bw * w, bh * h],
+                                "area": bw * w * bh * h, "iscrowd": 0,
+                            })
+                target = {"image_id": idx, "annotations": coco_annotations}
+                encoding = self.processor(images=image, annotations=target, return_tensors="pt")
+                return {k: v.squeeze(0) for k, v in encoding.items()}
+
+        def _collate(batch):
+            pixel_values = torch.stack([b["pixel_values"] for b in batch])
+            labels = [{"class_labels": b["labels"]["class_labels"],
+                       "boxes": b["labels"]["boxes"]} for b in batch]
+            return {"pixel_values": pixel_values, "labels": labels}
+
+        train_dir = dataset_path / "train"
+        val_dir   = dataset_path / "val"
+        if not train_dir.exists():
+            train_dir = dataset_path
+        if not val_dir.exists():
+            val_dir = train_dir
+
+        train_ds = _YOLODataset(train_dir, processor)
+        val_ds   = _YOLODataset(val_dir,   processor)
+        job["logs"].append(f"Train: {len(train_ds)} images  Val: {len(val_ds)} images")
+
+        batch_size = max(1, config.get("batch_size", 4))
+        train_loader = _DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                                   collate_fn=_collate, num_workers=0)
+        val_loader   = _DataLoader(val_ds,   batch_size=batch_size, shuffle=False,
+                                   collate_fn=_collate, num_workers=0)
+
+        epochs   = config.get("epochs", 50)
+        lr       = config.get("lr0", 1e-4)
+        optimizer = _optim.AdamW(model.parameters(), lr=lr,
+                                 weight_decay=config.get("weight_decay", 1e-4))
+        scheduler = _optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+
+        output_dir = dataset_path / "runs" / f"rtdetrv2_{job['id']}"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        job["logs"].append(f"Training for {epochs} epochs on {device_str}")
+        job["total_epochs"] = epochs
+
+        for epoch in range(1, epochs + 1):
+            if job.get("_stop_requested"):
+                job["status"] = "stopped"
+                job["logs"].append("Training stopped by user.")
+                break
+            if job.get("status") == "pausing":
+                job["status"] = "paused"
+                job["logs"].append("Epoch complete — training paused. Click Resume to continue.")
+                break
+
+            model.train()
+            total_loss = 0.0
+            for batch in train_loader:
+                pixel_values = batch["pixel_values"].to(device_str)
+                labels = [{k: v.to(device_str) for k, v in t.items()} for t in batch["labels"]]
+                outputs = model(pixel_values=pixel_values, labels=labels)
+                loss = outputs.loss
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+            scheduler.step()
+
+            avg_loss = total_loss / max(len(train_loader), 1)
+            job["current_epoch"] = epoch
+            job["progress"] = int(epoch / epochs * 100)
+            job["metrics"]["train_loss"] = round(avg_loss, 4)
+
+            # Validation loss
+            model.eval()
+            val_loss = 0.0
+            with torch.no_grad():
+                for batch in val_loader:
+                    pixel_values = batch["pixel_values"].to(device_str)
+                    labels = [{k: v.to(device_str) for k, v in t.items()} for t in batch["labels"]]
+                    outputs = model(pixel_values=pixel_values, labels=labels)
+                    val_loss += outputs.loss.item()
+            avg_val = val_loss / max(len(val_loader), 1)
+            job["metrics"]["val_loss"] = round(avg_val, 4)
+
+            gpu_mem = None
+            try:
+                if torch.cuda.is_available():
+                    gpu_mem = round(torch.cuda.memory_reserved(0) / 1e9, 2)
+                    job["gpu_mem_gb"] = gpu_mem
+            except Exception:
+                pass
+
+            mem_str = f"  GPU {gpu_mem:.1f}GB" if gpu_mem else ""
+            job["logs"].append(
+                f"Epoch {epoch}/{epochs}  loss={avg_loss:.4f}  val_loss={avg_val:.4f}{mem_str}"
+            )
+            job["epoch_history"].append({
+                "epoch": epoch, "train_box_loss": avg_loss,
+                "train_cls_loss": 0, "train_dfl_loss": 0,
+                "val_box_loss": avg_val, "val_cls_loss": 0, "val_dfl_loss": 0,
+                "mAP50": 0, "mAP50_95": 0, "precision": 0, "recall": 0, "speed_ms": 0,
+            })
+
+        if job.get("status") not in ("paused", "pausing", "stopped"):
+            ckpt_path = output_dir / "model_final"
+            try:
+                model.save_pretrained(str(ckpt_path))
+                processor.save_pretrained(str(ckpt_path))
+                job["model_path"] = str(ckpt_path)
+                job["logs"].append(f"✓ Training complete. Saved to: {ckpt_path}")
+            except Exception as e:
+                job["logs"].append(f"Warning: could not save checkpoint: {e}")
+            job["status"] = "completed"
+            job["progress"] = 100
+
+        del model
+        self._release_memory(job)
+
     # ── YOLO detection ────────────────────────────────────────────────────────
 
     def _train_yolo(self, job: Dict):
@@ -820,6 +1050,16 @@ class TrainingManager:
 
         arch = config.get("base_model", "yolov8n.pt")
         job["logs"].append(f"Base model: {arch}")
+
+        # If arch is a bare filename (not an absolute path), check models_dir first
+        # so we use the pre-downloaded copy instead of relying on ultralytics auto-download.
+        if not Path(arch).is_absolute():
+            models_dir = config.get("models_dir")
+            if models_dir:
+                candidate = Path(models_dir) / arch
+                if candidate.exists():
+                    arch = str(candidate)
+                    job["logs"].append(f"Using downloaded model: {candidate.name}")
 
         model = YOLO(arch)
         cbs = _make_callbacks(job)
