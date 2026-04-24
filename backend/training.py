@@ -2,6 +2,7 @@
 Training Module - Local model training with comprehensive logging
 """
 
+import os
 import sys
 import threading
 import uuid
@@ -79,6 +80,10 @@ def _resolve_device(config: Dict, job: Dict) -> Any:
 def _make_callbacks(job: Dict) -> Dict:
     """Create ultralytics callbacks that write structured metrics + human logs."""
 
+    import time as _time
+    # Mutable state shared across closures
+    _state: Dict = {"batch_times": [], "epoch_start": 0.0}
+
     def on_train_start(trainer):
         device = str(getattr(trainer, "device", "unknown"))
         job["logs"].append(f"Training started on device: {device}")
@@ -96,6 +101,55 @@ def _make_callbacks(job: Dict) -> Dict:
             f"{'dfl_loss':>10}  {'mAP50':>8}  {'mAP50-95':>10}  {'Speed':>10}"
         )
         job["logs"].append("─" * 90)
+
+    def on_train_epoch_start(trainer):
+        _state["batch_times"] = [_time.monotonic()]
+        _state["epoch_start"] = _state["batch_times"][0]
+
+    def on_train_batch_end(trainer):
+        now = _time.monotonic()
+        bt = _state["batch_times"]
+        bt.append(now)
+
+        # Rolling it/s over last 10 batch-to-batch intervals (skip epoch-start index 0)
+        batch_only = bt[1:]
+        window = batch_only[-11:]
+        elapsed = window[-1] - window[0]
+        its = (len(window) - 1) / elapsed if len(window) >= 2 and elapsed > 0 else 0.0
+
+        nb = int(getattr(trainer, "nb", 0) or 0)
+        if nb == 0:
+            try:
+                nb = len(trainer.train_loader)
+            except Exception:
+                pass
+        ni = int(getattr(trainer, "ni", 0) or 0)
+        epoch = int(trainer.epoch) + 1
+        batch_idx = (ni % nb) + 1 if nb > 0 else len(batch_only)
+
+        tloss = getattr(trainer, "tloss", None)
+        loss_names = list(getattr(trainer, "loss_names", []) or [])
+        losses: Dict[str, float] = {}
+        if tloss is not None:
+            try:
+                if hasattr(tloss, "__len__"):
+                    for idx, name in enumerate(loss_names):
+                        try:
+                            losses[name] = round(float(tloss[idx]), 5)
+                        except Exception:
+                            pass
+                else:
+                    losses["total"] = round(float(tloss), 5)
+            except Exception:
+                pass
+
+        job["batch_stats"] = {
+            "epoch": epoch,
+            "batch": batch_idx,
+            "total_batches": nb,
+            "its": round(its, 2),
+            "losses": losses,
+        }
 
     def on_fit_epoch_end(trainer):
         # Store trainer reference so stop/pause can signal it
@@ -156,13 +210,21 @@ def _make_callbacks(job: Dict) -> Dict:
         precision = float(raw_metrics.get("metrics/precision(B)", 0) or 0)
         recall    = float(raw_metrics.get("metrics/recall(B)",    0) or 0)
 
-        # ── Speed ─────────────────────────────────────────────────────────────
-        speed = dict(getattr(trainer, "speed", {}) or {})
-        pre_ms  = float(speed.get("preprocess",  0) or 0)
-        inf_ms  = float(speed.get("inference",   0) or 0)
-        loss_ms = float(speed.get("loss",        0) or 0)
-        post_ms = float(speed.get("postprocess", 0) or 0)
-        total_ms = pre_ms + inf_ms + loss_ms + post_ms
+        # ── Speed — use batch-to-batch timestamps, skipping epoch-start entry ──
+        bt = _state["batch_times"]
+        batch_only = bt[1:]  # bt[0] is epoch-start (pre-batch overhead), skip it
+        if len(batch_only) >= 2:
+            epoch_train_s = batch_only[-1] - batch_only[0]
+            nb_intervals = len(batch_only) - 1
+            total_ms = (epoch_train_s * 1000) / nb_intervals if nb_intervals > 0 else 0.0
+        elif len(batch_only) == 1 and len(bt) >= 2:
+            total_ms = (batch_only[0] - bt[0]) * 1000
+        else:
+            # Fallback: sum trainer.speed (ms/img) values — often 0 with verbose=False
+            speed = dict(getattr(trainer, "speed", {}) or {})
+            total_ms = sum(float(speed.get(k, 0) or 0) for k in ("preprocess", "inference", "loss", "postprocess"))
+        _state["batch_times"] = []  # reset for next epoch
+        epoch_its = (1000.0 / total_ms) if total_ms > 0 else 0.0
 
         # ── GPU memory ────────────────────────────────────────────────────────
         gpu_mem_gb: Optional[float] = None
@@ -188,12 +250,14 @@ def _make_callbacks(job: Dict) -> Dict:
                     pass
 
         # ── Human-readable log line ───────────────────────────────────────────
+        nb_batches = int(getattr(trainer, "nb", 0) or 0)
+        speed_str = f"{epoch_its:.2f} it/s" if epoch_its > 0 else f"{total_ms:.0f}ms/batch"
         epoch_line = (
             f"{epoch:>4}/{total:<4}  "
             f"{gpu_mem_str:>8}  "
             f"{box_loss:>10.4f}  {cls_loss:>10.4f}  {dfl_loss:>10.4f}  "
             f"{mAP50:>8.4f}  {mAP50_95:>10.4f}  "
-            f"{total_ms:>8.1f}ms"
+            f"{speed_str}  {nb_batches} batches"
         )
         job["logs"].append(epoch_line)
 
@@ -206,13 +270,6 @@ def _make_callbacks(job: Dict) -> Dict:
             if precision > 0:
                 val_line += f"  P:{precision:.3f}  R:{recall:.3f}"
             job["logs"].append(val_line)
-
-        if total_ms > 0:
-            job["logs"].append(
-                f"  Speed — pre:{pre_ms:.1f}ms  inf:{inf_ms:.1f}ms  "
-                f"loss:{loss_ms:.1f}ms  post:{post_ms:.1f}ms  "
-                + (f"inst:{inst_count}" if inst_count else "")
-            )
 
         # ── Structured epoch record for charting ──────────────────────────────
         record: Dict[str, Any] = {
@@ -228,6 +285,7 @@ def _make_callbacks(job: Dict) -> Dict:
             "precision":       round(precision,   5),
             "recall":          round(recall,      5),
             "speed_ms":        round(total_ms,    2),
+            "its":             round(epoch_its,  2),
         }
         if seg_loss > 0:
             record["train_seg_loss"] = round(seg_loss, 5)
@@ -253,9 +311,11 @@ def _make_callbacks(job: Dict) -> Dict:
             pass
 
     return {
-        "on_train_start":   on_train_start,
-        "on_fit_epoch_end": on_fit_epoch_end,
-        "on_train_end":     on_train_end,
+        "on_train_start":       on_train_start,
+        "on_train_epoch_start": on_train_epoch_start,
+        "on_train_batch_end":   on_train_batch_end,
+        "on_fit_epoch_end":     on_fit_epoch_end,
+        "on_train_end":         on_train_end,
     }
 
 
@@ -342,6 +402,7 @@ class TrainingManager:
             "model_path":    None,
             "device_info":   None,
             "gpu_mem_gb":    None,
+            "batch_stats":   None,
             "logs":          [],
         }
 
@@ -837,6 +898,10 @@ class TrainingManager:
 
         job["logs"].append(f"Classes ({num_classes}): {list(id2label.values())}")
         job["logs"].append(f"Loading model: {hf_id}")
+        job["logs"].append(
+            "Downloading model weights from HuggingFace — this may take several minutes on first run. "
+            "Subsequent runs will use the cached copy."
+        )
         job["status"] = "running"
 
         device = _resolve_device(config, job)
@@ -844,9 +909,11 @@ class TrainingManager:
 
         try:
             processor = AutoImageProcessor.from_pretrained(hf_id)
+            job["logs"].append("Processor loaded. Loading model weights…")
             model = AutoModelForObjectDetection.from_pretrained(
                 hf_id, id2label=id2label, label2id=label2id, ignore_mismatched_sizes=True,
             )
+            job["logs"].append(f"Model loaded. Moving to {device_str}…")
             model = model.to(device_str)
         except Exception as e:
             job["status"] = "failed"
@@ -1081,6 +1148,7 @@ class TrainingManager:
                 exist_ok=True,
                 verbose=False,
                 workers=0,  # avoid multiprocessing issues in daemon threads on Windows
+                save_period=config.get("save_period", 0),
                 # advanced hypers
                 lr0=config.get("lr0", 0.01),
                 lrf=config.get("lrf", 0.01),
@@ -1153,7 +1221,24 @@ class TrainingManager:
         arch = config.get("base_model", "yolov8n-seg.pt")
         job["logs"].append(f"Base model: {arch}")
 
-        model = YOLO(arch)
+        _restore_cwd = None
+        if not Path(arch).is_absolute():
+            _md = config.get("models_dir")
+            if _md:
+                _cand = Path(_md) / arch
+                if _cand.exists():
+                    arch = str(_cand)
+                    job["logs"].append(f"Using downloaded model: {_cand.name}")
+                else:
+                    _restore_cwd = os.getcwd()
+                    os.chdir(_md)
+
+        try:
+            model = YOLO(arch)
+        finally:
+            if _restore_cwd is not None:
+                os.chdir(_restore_cwd)
+
         cbs = _make_callbacks(job)
         for name, fn in cbs.items():
             model.add_callback(name, fn)
@@ -1173,6 +1258,7 @@ class TrainingManager:
                 exist_ok=True,
                 verbose=False,
                 workers=0,  # avoid multiprocessing issues in daemon threads on Windows
+                save_period=config.get("save_period", 0),
                 lr0=config.get("lr0", 0.01),
                 lrf=config.get("lrf", 0.01),
                 optimizer=config.get("optimizer", "SGD"),
@@ -1231,7 +1317,24 @@ class TrainingManager:
         arch = config.get("base_model", "yolov8n-cls.pt")
         job["logs"].append(f"Base model: {arch}")
 
-        model = YOLO(arch)
+        _restore_cwd = None
+        if not Path(arch).is_absolute():
+            _md = config.get("models_dir")
+            if _md:
+                _cand = Path(_md) / arch
+                if _cand.exists():
+                    arch = str(_cand)
+                    job["logs"].append(f"Using downloaded model: {_cand.name}")
+                else:
+                    _restore_cwd = os.getcwd()
+                    os.chdir(_md)
+
+        try:
+            model = YOLO(arch)
+        finally:
+            if _restore_cwd is not None:
+                os.chdir(_restore_cwd)
+
         cbs = _make_callbacks(job)
         for name, fn in cbs.items():
             model.add_callback(name, fn)
@@ -1286,11 +1389,23 @@ class TrainingManager:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _sanitize(obj: Any) -> Any:
+        """Recursively replace NaN/Inf floats with None so JSON serialisation never fails."""
+        import math
+        if isinstance(obj, float):
+            return None if (math.isnan(obj) or math.isinf(obj)) else obj
+        if isinstance(obj, dict):
+            return {k: TrainingManager._sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [TrainingManager._sanitize(v) for v in obj]
+        return obj
+
     def get_status(self, training_id: str) -> Optional[Dict[str, Any]]:
         if training_id not in self.training_jobs:
             return None
         job = self.training_jobs[training_id]
-        return {
+        return self._sanitize({
             "id":            job.get("id", training_id),
             "name":          job.get("name", f"Run {training_id}"),
             "status":        job.get("status", "unknown"),
@@ -1303,9 +1418,10 @@ class TrainingManager:
             "model_path":    job.get("model_path"),
             "device_info":   job.get("device_info"),
             "gpu_mem_gb":    job.get("gpu_mem_gb"),
+            "batch_stats":   job.get("batch_stats"),
             "logs":          job.get("logs", [])[-50:],
             "error":         job.get("error"),
-        }
+        })
 
     def stop_training(self, training_id: str) -> bool:
         if training_id not in self.training_jobs:
@@ -1462,3 +1578,41 @@ class TrainingManager:
         # newest first
         jobs.sort(key=lambda j: j["started_at"], reverse=True)
         return jobs
+
+    def delete_job(self, training_id: str) -> bool:
+        """Remove a finished job from the manager (does not delete weight files)."""
+        if training_id not in self.training_jobs:
+            return False
+        job = self.training_jobs[training_id]
+        if job.get("status") in ("running", "starting", "pausing"):
+            return False  # refuse to delete an active job
+        del self.training_jobs[training_id]
+        self.training_threads.pop(training_id, None)
+        self._persist_jobs()
+        return True
+
+    def list_checkpoints(self, training_id: str) -> List[Dict[str, Any]]:
+        """List all .pt weight files saved for a training run (epoch checkpoints + best/last)."""
+        job = self.training_jobs.get(training_id)
+        if not job:
+            return []
+        dataset_path = Path(job["dataset_path"])
+        job_id = job["id"]
+        mt = job.get("model_type", "yolo")
+
+        if mt == "segmentation":
+            weights_dir = dataset_path / "runs" / f"segment_{job_id}" / "train" / "weights"
+        elif mt == "classification":
+            weights_dir = dataset_path / "runs" / f"classify_{job_id}" / "train" / "weights"
+        else:
+            weights_dir = dataset_path / "runs" / f"train_{job_id}" / "train" / "weights"
+
+        checkpoints: List[Dict[str, Any]] = []
+        if weights_dir.exists():
+            for f in sorted(weights_dir.glob("*.pt")):
+                checkpoints.append({
+                    "name": f.name,
+                    "path": str(f),
+                    "size_mb": round(f.stat().st_size / 1e6, 1),
+                })
+        return checkpoints

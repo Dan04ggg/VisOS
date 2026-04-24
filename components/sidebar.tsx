@@ -24,6 +24,8 @@ import {
   Activity,
   BarChart2,
   Archive,
+  ScanSearch,
+  FlaskConical,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -152,6 +154,18 @@ const navGroups: NavGroup[] = [
         label: 'Training',
         icon: Cpu,
         description: 'Train an AI model on your annotated dataset with real-time loss and accuracy tracking.',
+      },
+      {
+        id: 'inference',
+        label: 'Inference',
+        icon: ScanSearch,
+        description: 'Test trained models on images, video files, or live webcam with tracking and ReID.',
+      },
+      {
+        id: 'evaluate',
+        label: 'Evaluate',
+        icon: FlaskConical,
+        description: 'Head-to-head model evaluation — compare mAP, precision, recall across multiple models.',
       },
       {
         id: 'models',

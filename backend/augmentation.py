@@ -16,9 +16,9 @@ import numpy as np
 
 class DatasetAugmenter:
     """Apply augmentations to expand dataset size"""
-    
+
     IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
-    
+
     AVAILABLE_AUGMENTATIONS = {
         "flip_horizontal": {
             "name": "Horizontal Flip",
@@ -230,11 +230,11 @@ class DatasetAugmenter:
             }
         }
     }
-    
+
     def get_available_augmentations(self) -> Dict[str, Any]:
         """Return list of available augmentations with their parameters"""
         return self.AVAILABLE_AUGMENTATIONS
-    
+
     def augment_dataset(
         self,
         input_path: Path,
@@ -242,141 +242,206 @@ class DatasetAugmenter:
         format_name: str,
         target_size: int,
         augmentations: Dict[str, Dict[str, Any]],
-        preserve_originals: bool = True
+        preserve_originals: bool = True,
+        progress_callback=None,
     ) -> Dict[str, Any]:
         """
-        Augment a dataset to reach target size
-        
-        Args:
-            input_path: Source dataset path
-            output_path: Output dataset path
-            format_name: Dataset format
-            target_size: Target number of images
-            augmentations: Dict of augmentation configs {aug_name: {enabled: bool, params: {}}}
-            preserve_originals: Whether to include original images in output
-        
-        Returns:
-            Augmentation results
+        Augment a dataset to reach target size, preserving train/val/test splits.
+        Augmentation is applied within each split independently so no images leak
+        across split boundaries.
         """
         input_path = Path(input_path)
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
-        
-        # Find all images
+
         images = self._find_images(input_path)
         original_count = len(images)
-        
+
         if original_count == 0:
             return {"success": False, "error": "No images found in dataset"}
-        
-        # Calculate how many augmented images we need
-        augmentations_needed = max(0, target_size - (original_count if preserve_originals else 0))
-        augmentations_per_image = math.ceil(augmentations_needed / original_count) if original_count > 0 else 0
-        
-        # Get enabled augmentations
+
         enabled_augs = [
             (name, config.get("params", {}))
             for name, config in augmentations.items()
             if config.get("enabled", True) and name in self.AVAILABLE_AUGMENTATIONS
         ]
-        
+
         if not enabled_augs:
             return {"success": False, "error": "No valid augmentations enabled"}
-        
-        # Copy dataset structure
-        self._copy_structure(input_path, output_path, format_name)
-        
-        generated_count = 0
-        augmented_images = []
-        
-        for img_info in images:
-            img_path = img_info["path"]
-            img_id = img_info["id"]
-            
-            # Copy original if preserving
-            if preserve_originals:
-                self._copy_image_with_annotations(input_path, output_path, img_info, format_name)
-            
-            # Generate augmentations
-            for aug_idx in range(augmentations_per_image):
-                if generated_count >= augmentations_needed:
-                    break
-                
-                # Randomly select and combine augmentations
-                num_augs = random.randint(1, min(3, len(enabled_augs)))
-                selected_augs = random.sample(enabled_augs, num_augs)
-                
-                # Apply augmentations
-                aug_result = self._apply_augmentations(
-                    input_path / img_path,
-                    output_path,
-                    img_id,
-                    aug_idx,
-                    selected_augs,
-                    format_name,
-                    input_path
-                )
-                
-                if aug_result["success"]:
-                    generated_count += 1
-                    augmented_images.append(aug_result["output_path"])
-        
-        # Update dataset config (e.g., YOLO yaml)
-        self._update_dataset_config(input_path, output_path, format_name)
-        
+
+        # Group images by split (None = flat dataset with no splits)
+        split_groups: Dict[Optional[str], List] = {}
+        for img in images:
+            split = img.get("split")
+            split_groups.setdefault(split, []).append(img)
+
+        split_names = [k for k in split_groups if k is not None]
+        has_splits = bool(split_names)
+
+        self._copy_structure(input_path, output_path, format_name,
+                             splits=split_names if has_splits else None)
+
+        # Apply the same expansion factor uniformly to each split
+        aug_factor = target_size / original_count if original_count > 0 else 2.0
+
+        total_generated = 0
+        img_global_idx = 0
+
+        for split, split_images in split_groups.items():
+            split_count = len(split_images)
+            split_target = math.ceil(split_count * aug_factor)
+            aug_needed = max(0, split_target - (split_count if preserve_originals else 0))
+            aug_per_image = math.ceil(aug_needed / split_count) if split_count > 0 else 0
+
+            split_generated = 0
+
+            for img_info in split_images:
+                img_id = img_info["id"]
+
+                if preserve_originals:
+                    self._copy_image_with_annotations(input_path, output_path, img_info, format_name)
+
+                for aug_idx in range(aug_per_image):
+                    if split_generated >= aug_needed:
+                        break
+
+                    num_augs = random.randint(1, min(3, len(enabled_augs)))
+                    selected_augs = random.sample(enabled_augs, num_augs)
+
+                    aug_result = self._apply_augmentations(
+                        input_path / img_info["path"],
+                        output_path,
+                        img_id,
+                        aug_idx,
+                        selected_augs,
+                        format_name,
+                        input_path,
+                        split=split,
+                    )
+
+                    if aug_result["success"]:
+                        split_generated += 1
+                        total_generated += 1
+
+                img_global_idx += 1
+                if progress_callback and original_count > 0:
+                    progress_callback(int(img_global_idx / original_count * 90), total_generated)
+
+        self._update_dataset_config(input_path, output_path, format_name,
+                                    splits=split_names if has_splits else None)
+
         return {
             "success": True,
             "original_images": original_count,
-            "augmented_images": generated_count,
-            "total_images": (original_count if preserve_originals else 0) + generated_count,
-            "augmentations_applied": [name for name, _ in enabled_augs]
+            "augmented_images": total_generated,
+            "total_images": (original_count if preserve_originals else 0) + total_generated,
+            "augmentations_applied": [name for name, _ in enabled_augs],
         }
-    
+
     def _find_images(self, path: Path) -> List[Dict[str, Any]]:
-        """Find all images in dataset"""
+        """Find all images in dataset, detecting train/val/test split structure."""
         images = []
-        
-        # Check common locations
-        search_dirs = ["images", "train/images", "val/images", "test/images", "JPEGImages", ""]
-        
-        for search_dir in search_dirs:
-            search_path = path / search_dir if search_dir else path
-            if not search_path.exists():
+        seen: set = set()
+        SPLIT_NAMES = ["train", "val", "valid", "test"]
+
+        # Detect whether this dataset has split subdirectories
+        has_splits = False
+        for split in SPLIT_NAMES:
+            split_path = path / split
+            if not (split_path.exists() and split_path.is_dir()):
                 continue
-            
-            for img_file in search_path.iterdir():
-                if img_file.suffix.lower() in self.IMAGE_EXTENSIONS:
-                    images.append({
-                        "id": img_file.stem,
-                        "path": str(img_file.relative_to(path)),
-                        "full_path": str(img_file)
-                    })
-        
+            if (split_path / "images").exists():
+                has_splits = True
+                break
+            try:
+                if any(
+                    f.is_file() and f.suffix.lower() in self.IMAGE_EXTENSIONS
+                    for f in split_path.iterdir()
+                ):
+                    has_splits = True
+                    break
+            except Exception:
+                pass
+
+        if has_splits:
+            for split in SPLIT_NAMES:
+                split_img_dir = path / split / "images"
+                if split_img_dir.exists():
+                    for img_file in sorted(split_img_dir.iterdir(), key=lambda f: f.name):
+                        if img_file.is_file() and img_file.suffix.lower() in self.IMAGE_EXTENSIONS:
+                            rel = str(img_file.relative_to(path))
+                            if rel not in seen:
+                                seen.add(rel)
+                                images.append({
+                                    "id": img_file.stem,
+                                    "path": rel,
+                                    "full_path": str(img_file),
+                                    "split": split,
+                                })
+                else:
+                    split_dir = path / split
+                    if split_dir.exists() and split_dir.is_dir():
+                        for img_file in sorted(split_dir.iterdir(), key=lambda f: f.name):
+                            if img_file.is_file() and img_file.suffix.lower() in self.IMAGE_EXTENSIONS:
+                                rel = str(img_file.relative_to(path))
+                                if rel not in seen:
+                                    seen.add(rel)
+                                    images.append({
+                                        "id": img_file.stem,
+                                        "path": rel,
+                                        "full_path": str(img_file),
+                                        "split": split,
+                                    })
+        else:
+            for search_dir in ["images", "JPEGImages", ""]:
+                search_path = path / search_dir if search_dir else path
+                if not search_path.exists():
+                    continue
+                try:
+                    for img_file in sorted(search_path.iterdir(), key=lambda f: f.name):
+                        if img_file.is_file() and img_file.suffix.lower() in self.IMAGE_EXTENSIONS:
+                            rel = str(img_file.relative_to(path))
+                            if rel not in seen:
+                                seen.add(rel)
+                                images.append({
+                                    "id": img_file.stem,
+                                    "path": rel,
+                                    "full_path": str(img_file),
+                                    "split": None,
+                                })
+                except Exception:
+                    pass
+
         return images
-    
-    def _copy_structure(self, src: Path, dst: Path, format_name: str):
-        """Copy dataset directory structure"""
-        # Copy yaml/config files
+
+    def _copy_structure(self, src: Path, dst: Path, format_name: str, splits: List[str] = None):
+        """Copy dataset directory structure, creating split subdirs when present."""
         for config_file in src.glob("*.yaml"):
             shutil.copy(config_file, dst / config_file.name)
         for config_file in src.glob("*.yml"):
             shutil.copy(config_file, dst / config_file.name)
-        
-        # Create directories
+
         if format_name in ["yolo", "yolov5", "yolov8", "yolov9", "yolov10", "yolov11", "yolov12"]:
-            (dst / "images").mkdir(exist_ok=True)
-            (dst / "labels").mkdir(exist_ok=True)
+            if splits:
+                for split in splits:
+                    (dst / split / "images").mkdir(parents=True, exist_ok=True)
+                    (dst / split / "labels").mkdir(parents=True, exist_ok=True)
+            else:
+                (dst / "images").mkdir(exist_ok=True)
+                (dst / "labels").mkdir(exist_ok=True)
         elif format_name in ["pascal-voc", "voc"]:
             (dst / "JPEGImages").mkdir(exist_ok=True)
             (dst / "Annotations").mkdir(exist_ok=True)
         elif format_name == "coco":
-            (dst / "images").mkdir(exist_ok=True)
-            # Copy annotations JSON
+            if splits:
+                for split in splits:
+                    (dst / split / "images").mkdir(parents=True, exist_ok=True)
+            else:
+                (dst / "images").mkdir(exist_ok=True)
             for json_file in src.glob("*.json"):
                 with open(json_file) as f:
                     data = json.load(f)
                     if all(k in data for k in ["images", "annotations", "categories"]):
-                        # Create new COCO file with empty images/annotations
                         new_data = {
                             "images": [],
                             "annotations": [],
@@ -384,7 +449,7 @@ class DatasetAugmenter:
                         }
                         with open(dst / json_file.name, "w") as out:
                             json.dump(new_data, out, indent=2)
-    
+
     def _copy_image_with_annotations(
         self,
         src_path: Path,
@@ -392,33 +457,48 @@ class DatasetAugmenter:
         img_info: Dict[str, Any],
         format_name: str
     ):
-        """Copy an image and its annotations"""
+        """Copy an image and its annotations, respecting split structure."""
         src_img = src_path / img_info["path"]
-        
+        split = img_info.get("split")
+
         if format_name in ["yolo", "yolov5", "yolov8", "yolov9", "yolov10", "yolov11", "yolov12"]:
-            dst_img = dst_path / "images" / src_img.name
-            shutil.copy(src_img, dst_img)
-            
-            # Copy label
+            if split:
+                img_dir = dst_path / split / "images"
+                lbl_dir = dst_path / split / "labels"
+            else:
+                img_dir = dst_path / "images"
+                lbl_dir = dst_path / "labels"
+
+            img_dir.mkdir(parents=True, exist_ok=True)
+            lbl_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy(src_img, img_dir / src_img.name)
+
             label_name = f"{img_info['id']}.txt"
-            for label_dir in ["labels", "train/labels", "val/labels"]:
-                src_label = src_path / label_dir / label_name
+            candidate_label_dirs = []
+            if split:
+                candidate_label_dirs.append(src_path / split / "labels")
+            candidate_label_dirs += [
+                src_path / "labels",
+                src_path / "train" / "labels",
+                src_path / "val" / "labels",
+            ]
+            for ld in candidate_label_dirs:
+                src_label = ld / label_name
                 if src_label.exists():
-                    shutil.copy(src_label, dst_path / "labels" / label_name)
+                    shutil.copy(src_label, lbl_dir / label_name)
                     break
-        
+
         elif format_name in ["pascal-voc", "voc"]:
             dst_img = dst_path / "JPEGImages" / src_img.name
             shutil.copy(src_img, dst_img)
-            
-            # Copy annotation
+
             ann_name = f"{img_info['id']}.xml"
             for ann_dir in ["Annotations", ""]:
                 src_ann = src_path / ann_dir / ann_name if ann_dir else src_path / ann_name
                 if src_ann.exists():
                     shutil.copy(src_ann, dst_path / "Annotations" / ann_name)
                     break
-    
+
     def _apply_augmentations(
         self,
         src_img_path: Path,
@@ -427,36 +507,32 @@ class DatasetAugmenter:
         aug_idx: int,
         augmentations: List[Tuple[str, Dict]],
         format_name: str,
-        src_dataset_path: Path
+        src_dataset_path: Path,
+        split: str = None,
     ) -> Dict[str, Any]:
-        """Apply augmentations to a single image"""
+        """Apply augmentations to a single image, writing output into the correct split dir."""
         try:
             img = Image.open(src_img_path).convert("RGB")
             original_size = img.size
-            
-            # Track transformation for annotation adjustment
-            transform_matrix = np.eye(3)  # Identity matrix
-            flip_h = False
-            flip_v = False
-            
+
+            transform_infos = []
+
             for aug_name, params in augmentations:
                 img, transform_info = self._apply_single_augmentation(img, aug_name, params)
-                
-                if transform_info.get("flip_h"):
-                    flip_h = not flip_h
-                if transform_info.get("flip_v"):
-                    flip_v = not flip_v
-                if "matrix" in transform_info:
-                    transform_matrix = np.dot(transform_info["matrix"], transform_matrix)
-            
-            # Save augmented image
+                if transform_info:
+                    transform_infos.append(transform_info)
+
             aug_id = f"{img_id}_aug{aug_idx}"
-            
+
             if format_name in ["yolo", "yolov5", "yolov8", "yolov9", "yolov10", "yolov11", "yolov12"]:
-                output_img_path = output_path / "images" / f"{aug_id}.jpg"
+                if split:
+                    img_dir = output_path / split / "images"
+                else:
+                    img_dir = output_path / "images"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                output_img_path = img_dir / f"{aug_id}.jpg"
                 img.save(output_img_path, "JPEG", quality=95)
-                
-                # Transform annotations
+
                 self._transform_yolo_annotations(
                     src_dataset_path,
                     output_path,
@@ -464,14 +540,14 @@ class DatasetAugmenter:
                     aug_id,
                     original_size,
                     img.size,
-                    flip_h,
-                    flip_v
+                    transform_infos,
+                    split=split,
                 )
-            
+
             elif format_name in ["pascal-voc", "voc"]:
                 output_img_path = output_path / "JPEGImages" / f"{aug_id}.jpg"
                 img.save(output_img_path, "JPEG", quality=95)
-                
+
                 self._transform_voc_annotations(
                     src_dataset_path,
                     output_path,
@@ -479,20 +555,23 @@ class DatasetAugmenter:
                     aug_id,
                     original_size,
                     img.size,
-                    flip_h,
-                    flip_v
+                    transform_infos,
                 )
-            
+
             else:
-                output_img_path = output_path / "images" / f"{aug_id}.jpg"
-                output_img_path.parent.mkdir(exist_ok=True)
+                if split:
+                    img_dir = output_path / split / "images"
+                else:
+                    img_dir = output_path / "images"
+                img_dir.mkdir(parents=True, exist_ok=True)
+                output_img_path = img_dir / f"{aug_id}.jpg"
                 img.save(output_img_path, "JPEG", quality=95)
-            
+
             return {"success": True, "output_path": str(output_img_path)}
-        
+
         except Exception as e:
             return {"success": False, "error": str(e)}
-    
+
     def _apply_single_augmentation(
         self,
         img: Image.Image,
@@ -501,24 +580,27 @@ class DatasetAugmenter:
     ) -> Tuple[Image.Image, Dict[str, Any]]:
         """Apply a single augmentation to an image"""
         transform_info = {}
-        
+
         if aug_name == "flip_horizontal":
             img = ImageOps.mirror(img)
             transform_info["flip_h"] = True
-        
+
         elif aug_name == "flip_vertical":
             img = ImageOps.flip(img)
             transform_info["flip_v"] = True
-        
+
         elif aug_name == "rotate":
             angle_range = params.get("angle_range", [-15, 15])
             if isinstance(angle_range, list):
                 angle = random.uniform(angle_range[0], angle_range[1])
             else:
                 angle = random.uniform(-angle_range, angle_range)
+            img_w, img_h = img.size
             img = img.rotate(angle, resample=Image.Resampling.BILINEAR, expand=False, fillcolor=(128, 128, 128))
             transform_info["angle"] = angle
-        
+            transform_info["img_w"] = img_w
+            transform_info["img_h"] = img_h
+
         elif aug_name == "brightness":
             factor_range = params.get("factor_range", [0.8, 1.2])
             if isinstance(factor_range, list):
@@ -527,7 +609,7 @@ class DatasetAugmenter:
                 factor = random.uniform(1 - factor_range, 1 + factor_range)
             enhancer = ImageEnhance.Brightness(img)
             img = enhancer.enhance(factor)
-        
+
         elif aug_name == "contrast":
             factor_range = params.get("factor_range", [0.8, 1.2])
             if isinstance(factor_range, list):
@@ -536,7 +618,7 @@ class DatasetAugmenter:
                 factor = random.uniform(1 - factor_range, 1 + factor_range)
             enhancer = ImageEnhance.Contrast(img)
             img = enhancer.enhance(factor)
-        
+
         elif aug_name == "saturation":
             factor_range = params.get("factor_range", [0.8, 1.2])
             if isinstance(factor_range, list):
@@ -545,7 +627,7 @@ class DatasetAugmenter:
                 factor = random.uniform(1 - factor_range, 1 + factor_range)
             enhancer = ImageEnhance.Color(img)
             img = enhancer.enhance(factor)
-        
+
         elif aug_name == "blur":
             radius_range = params.get("radius_range", [0.5, 1.5])
             if isinstance(radius_range, list):
@@ -553,63 +635,68 @@ class DatasetAugmenter:
             else:
                 radius = radius_range
             img = img.filter(ImageFilter.GaussianBlur(radius=radius))
-        
+
         elif aug_name == "sharpen":
             factor = params.get("factor", 1.5)
             enhancer = ImageEnhance.Sharpness(img)
             img = enhancer.enhance(factor)
-        
+
         elif aug_name == "grayscale":
             probability = params.get("probability", 0.1)
             if random.random() < probability:
                 img = ImageOps.grayscale(img).convert("RGB")
-        
+
         elif aug_name == "noise":
             variance = params.get("variance", 0.02)
             img_array = np.array(img).astype(np.float32) / 255.0
             noise = np.random.normal(0, variance, img_array.shape)
             img_array = np.clip(img_array + noise, 0, 1)
             img = Image.fromarray((img_array * 255).astype(np.uint8))
-        
+
         elif aug_name == "cutout":
             num_holes = params.get("num_holes", 2)
             size_range = params.get("size_range", [0.05, 0.15])
             img = self._apply_cutout(img, num_holes, size_range)
-        
+
         elif aug_name == "histogram_equalization":
             img = ImageOps.equalize(img)
-        
+
         elif aug_name == "invert":
             probability = params.get("probability", 0.1)
             if random.random() < probability:
                 img = ImageOps.invert(img)
-        
+
         elif aug_name == "posterize":
             bits = params.get("bits", 4)
             if isinstance(bits, float):
                 bits = int(bits)
             img = ImageOps.posterize(img, bits)
-        
+
         elif aug_name == "solarize":
             threshold = params.get("threshold", 128)
             if isinstance(threshold, float):
                 threshold = int(threshold)
             img = ImageOps.solarize(img, threshold)
-        
+
         elif aug_name == "crop":
             crop_range = params.get("crop_range", [0.8, 0.95])
             if isinstance(crop_range, list):
                 scale = random.uniform(crop_range[0], crop_range[1])
             else:
                 scale = crop_range
-            
+
             w, h = img.size
             new_w, new_h = int(w * scale), int(h * scale)
             left = random.randint(0, w - new_w)
             top = random.randint(0, h - new_h)
             img = img.crop((left, top, left + new_w, top + new_h))
             img = img.resize((w, h), Image.Resampling.BILINEAR)
-        
+            transform_info["crop"] = {
+                "left": left, "top": top,
+                "crop_w": new_w, "crop_h": new_h,
+                "orig_w": w, "orig_h": h,
+            }
+
         elif aug_name == "hue":
             shift_range = params.get("shift_range", [-15, 15])
             if isinstance(shift_range, list):
@@ -617,79 +704,125 @@ class DatasetAugmenter:
             else:
                 shift = random.uniform(-shift_range, shift_range)
             img = self._shift_hue(img, shift / 360.0)
-        
+
         elif aug_name == "jpeg_compression":
             quality_range = params.get("quality_range", [60, 90])
             if isinstance(quality_range, list):
                 quality = random.randint(int(quality_range[0]), int(quality_range[1]))
             else:
                 quality = int(quality_range)
-            
+
             import io
             buffer = io.BytesIO()
             img.save(buffer, format="JPEG", quality=quality)
             buffer.seek(0)
             img = Image.open(buffer).convert("RGB")
-        
+
         return img, transform_info
-    
+
     def _apply_cutout(self, img: Image.Image, num_holes: int, size_range: List[float]) -> Image.Image:
         """Apply cutout augmentation"""
         img_array = np.array(img)
         h, w = img_array.shape[:2]
-        
+
         for _ in range(num_holes):
             size = random.uniform(size_range[0], size_range[1])
             hole_h = int(h * size)
             hole_w = int(w * size)
-            
+
             y = random.randint(0, h - hole_h)
             x = random.randint(0, w - hole_w)
-            
+
             img_array[y:y+hole_h, x:x+hole_w] = 128  # Gray fill
-        
+
         return Image.fromarray(img_array)
-    
+
     def _shift_hue(self, img: Image.Image, shift: float) -> Image.Image:
         """Shift hue of an image"""
         import colorsys
-        
+
         img_array = np.array(img).astype(np.float32) / 255.0
         h_shift = shift
-        
+
         # Convert to HSV
         r, g, b = img_array[:,:,0], img_array[:,:,1], img_array[:,:,2]
-        
+
         max_c = np.maximum(np.maximum(r, g), b)
         min_c = np.minimum(np.minimum(r, g), b)
         diff = max_c - min_c
-        
+
         # Hue calculation
         h = np.zeros_like(max_c)
         mask = diff > 0
-        
+
         idx = (max_c == r) & mask
         h[idx] = (60 * ((g[idx] - b[idx]) / diff[idx]) + 360) % 360
-        
+
         idx = (max_c == g) & mask
         h[idx] = (60 * ((b[idx] - r[idx]) / diff[idx]) + 120) % 360
-        
+
         idx = (max_c == b) & mask
         h[idx] = (60 * ((r[idx] - g[idx]) / diff[idx]) + 240) % 360
-        
+
         # Apply shift
         h = (h / 360 + h_shift) % 1.0
-        
+
         # Simple approximation - just return with slight color shift
         # Full HSV conversion is expensive
         shift_factor = h_shift * 2
         r_new = np.clip(r + shift_factor * 0.3, 0, 1)
         g_new = np.clip(g - shift_factor * 0.2, 0, 1)
         b_new = np.clip(b + shift_factor * 0.1, 0, 1)
-        
+
         result = np.stack([r_new, g_new, b_new], axis=2)
         return Image.fromarray((result * 255).astype(np.uint8))
-    
+
+    def _apply_transform_to_point(self, px: float, py: float, ti: Dict) -> Tuple[float, float]:
+        """Apply a single transform_info to a normalized point."""
+        if ti.get("flip_h"):
+            px = 1.0 - px
+        if ti.get("flip_v"):
+            py = 1.0 - py
+        if "angle" in ti:
+            theta = math.radians(ti["angle"])
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+            # Convert to pixel space so aspect ratio is preserved correctly,
+            # then normalize back — this fixes non-square (landscape/portrait) images.
+            W = ti.get("img_w", 1)
+            H = ti.get("img_h", 1)
+            dx = (px - 0.5) * W
+            dy = (py - 0.5) * H
+            px = (dx * cos_t + dy * sin_t) / W + 0.5
+            py = (-dx * sin_t + dy * cos_t) / H + 0.5
+        if "crop" in ti:
+            c = ti["crop"]
+            px = (px - c["left"] / c["orig_w"]) / (c["crop_w"] / c["orig_w"])
+            py = (py - c["top"] / c["orig_h"]) / (c["crop_h"] / c["orig_h"])
+        return px, py
+
+    def _apply_transform_to_bbox(
+        self, x_c: float, y_c: float, w_b: float, h_b: float, ti: Dict
+    ) -> Optional[Tuple[float, float, float, float]]:
+        """Apply a single transform to a YOLO bbox; returns None if box exits the image."""
+        half_w, half_h = w_b / 2, h_b / 2
+        corners = [
+            (x_c - half_w, y_c - half_h),
+            (x_c + half_w, y_c - half_h),
+            (x_c - half_w, y_c + half_h),
+            (x_c + half_w, y_c + half_h),
+        ]
+        transformed = [self._apply_transform_to_point(cx, cy, ti) for cx, cy in corners]
+        xs = [p[0] for p in transformed]
+        ys = [p[1] for p in transformed]
+        xmin = max(0.0, min(xs))
+        xmax = min(1.0, max(xs))
+        ymin = max(0.0, min(ys))
+        ymax = min(1.0, max(ys))
+        if xmax <= xmin or ymax <= ymin:
+            return None
+        return (xmin + xmax) / 2, (ymin + ymax) / 2, xmax - xmin, ymax - ymin
+
     def _transform_yolo_annotations(
         self,
         src_path: Path,
@@ -698,70 +831,82 @@ class DatasetAugmenter:
         dst_id: str,
         original_size: Tuple[int, int],
         new_size: Tuple[int, int],
-        flip_h: bool,
-        flip_v: bool
+        transform_infos: List[Dict],
+        split: str = None,
     ):
-        """Transform YOLO annotations for augmented image"""
-        # Find source label
+        """Transform YOLO annotations for an augmented image, respecting split dirs."""
         src_label = None
-        for label_dir in ["labels", "train/labels", "val/labels"]:
-            potential = src_path / label_dir / f"{src_id}.txt"
+        candidate_dirs = []
+        if split:
+            candidate_dirs.append(src_path / split / "labels")
+        candidate_dirs += [
+            src_path / "labels",
+            src_path / "train" / "labels",
+            src_path / "val" / "labels",
+        ]
+        for d in candidate_dirs:
+            potential = d / f"{src_id}.txt"
             if potential.exists():
                 src_label = potential
                 break
-        
-        if not src_label or not src_label.exists():
-            # Create empty label
-            (dst_path / "labels" / f"{dst_id}.txt").touch()
+
+        if split:
+            dst_label_dir = dst_path / split / "labels"
+        else:
+            dst_label_dir = dst_path / "labels"
+        dst_label_dir.mkdir(parents=True, exist_ok=True)
+
+        if not src_label:
+            (dst_label_dir / f"{dst_id}.txt").touch()
             return
-        
-        # Read and transform annotations
+
         with open(src_label) as f:
             lines = f.readlines()
-        
+
         transformed_lines = []
         for line in lines:
             parts = line.strip().split()
-            if len(parts) >= 5:
-                class_id = parts[0]
-                x_center = float(parts[1])
-                y_center = float(parts[2])
-                width = float(parts[3])
-                height = float(parts[4])
-                
-                # Apply flips
-                if flip_h:
-                    x_center = 1 - x_center
-                if flip_v:
-                    y_center = 1 - y_center
-                
-                # Segmentation points
-                if len(parts) > 5:
-                    points = [float(p) for p in parts[5:]]
-                    transformed_points = []
-                    for i in range(0, len(points), 2):
-                        x = points[i]
-                        y = points[i + 1] if i + 1 < len(points) else 0
-                        if flip_h:
-                            x = 1 - x
-                        if flip_v:
-                            y = 1 - y
-                        transformed_points.extend([x, y])
-                    
+            if len(parts) < 5:
+                continue
+            class_id = parts[0]
+
+            if len(parts) == 5:
+                # Detection format: class_id cx cy w h
+                x_c = float(parts[1])
+                y_c = float(parts[2])
+                w_b = float(parts[3])
+                h_b = float(parts[4])
+
+                valid = True
+                for ti in transform_infos:
+                    result = self._apply_transform_to_bbox(x_c, y_c, w_b, h_b, ti)
+                    if result is None:
+                        valid = False
+                        break
+                    x_c, y_c, w_b, h_b = result
+
+                if valid:
+                    transformed_lines.append(f"{class_id} {x_c:.6f} {y_c:.6f} {w_b:.6f} {h_b:.6f}")
+            else:
+                # Segmentation format: class_id x1 y1 x2 y2 ...
+                coords = [float(p) for p in parts[1:]]
+                transformed_coords = []
+                for i in range(0, len(coords) - 1, 2):
+                    px = coords[i]
+                    py = coords[i + 1]
+                    for ti in transform_infos:
+                        px, py = self._apply_transform_to_point(px, py, ti)
+                    transformed_coords.extend([max(0.0, min(1.0, px)), max(0.0, min(1.0, py))])
+
+                if len(transformed_coords) >= 6:
                     transformed_lines.append(
-                        f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f} " +
-                        " ".join(f"{p:.6f}" for p in transformed_points)
+                        f"{class_id} " + " ".join(f"{p:.6f}" for p in transformed_coords)
                     )
-                else:
-                    transformed_lines.append(
-                        f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}"
-                    )
-        
-        # Write transformed annotations
-        dst_label = dst_path / "labels" / f"{dst_id}.txt"
+
+        dst_label = dst_label_dir / f"{dst_id}.txt"
         with open(dst_label, "w") as f:
             f.write("\n".join(transformed_lines))
-    
+
     def _transform_voc_annotations(
         self,
         src_path: Path,
@@ -770,69 +915,101 @@ class DatasetAugmenter:
         dst_id: str,
         original_size: Tuple[int, int],
         new_size: Tuple[int, int],
-        flip_h: bool,
-        flip_v: bool
+        transform_infos: List[Dict],
     ):
-        """Transform Pascal VOC annotations for augmented image"""
+        """Transform Pascal VOC annotations for augmented image."""
         import xml.etree.ElementTree as ET
-        from xml.dom import minidom
-        
-        # Find source annotation
+
         src_ann = None
         for ann_dir in ["Annotations", ""]:
             potential = src_path / ann_dir / f"{src_id}.xml" if ann_dir else src_path / f"{src_id}.xml"
             if potential.exists():
                 src_ann = potential
                 break
-        
+
         if not src_ann:
             return
-        
+
         tree = ET.parse(src_ann)
         root = tree.getroot()
-        
-        w, h = original_size
-        
-        # Update filename
+
+        orig_w, orig_h = original_size
+
         filename_elem = root.find("filename")
         if filename_elem is not None:
             filename_elem.text = f"{dst_id}.jpg"
-        
-        # Transform bounding boxes
+
+        to_remove = []
         for obj in root.findall("object"):
             bndbox = obj.find("bndbox")
-            if bndbox is not None:
-                xmin = int(float(bndbox.find("xmin").text))
-                ymin = int(float(bndbox.find("ymin").text))
-                xmax = int(float(bndbox.find("xmax").text))
-                ymax = int(float(bndbox.find("ymax").text))
-                
-                if flip_h:
-                    xmin, xmax = w - xmax, w - xmin
-                if flip_v:
-                    ymin, ymax = h - ymax, h - ymin
-                
-                bndbox.find("xmin").text = str(xmin)
-                bndbox.find("ymin").text = str(ymin)
-                bndbox.find("xmax").text = str(xmax)
-                bndbox.find("ymax").text = str(ymax)
-        
-        # Write transformed annotation
+            if bndbox is None:
+                continue
+            xmin = int(float(bndbox.find("xmin").text))
+            ymin = int(float(bndbox.find("ymin").text))
+            xmax = int(float(bndbox.find("xmax").text))
+            ymax = int(float(bndbox.find("ymax").text))
+
+            # Normalize to [0, 1]
+            norm_x_c = (xmin + xmax) / 2 / orig_w
+            norm_y_c = (ymin + ymax) / 2 / orig_h
+            norm_w = (xmax - xmin) / orig_w
+            norm_h = (ymax - ymin) / orig_h
+
+            valid = True
+            for ti in transform_infos:
+                result = self._apply_transform_to_bbox(norm_x_c, norm_y_c, norm_w, norm_h, ti)
+                if result is None:
+                    valid = False
+                    break
+                norm_x_c, norm_y_c, norm_w, norm_h = result
+
+            if not valid:
+                to_remove.append(obj)
+                continue
+
+            bndbox.find("xmin").text = str(int((norm_x_c - norm_w / 2) * orig_w))
+            bndbox.find("ymin").text = str(int((norm_y_c - norm_h / 2) * orig_h))
+            bndbox.find("xmax").text = str(int((norm_x_c + norm_w / 2) * orig_w))
+            bndbox.find("ymax").text = str(int((norm_y_c + norm_h / 2) * orig_h))
+
+        for obj in to_remove:
+            root.remove(obj)
+
         dst_ann = dst_path / "Annotations" / f"{dst_id}.xml"
         tree.write(dst_ann)
-    
-    def _update_dataset_config(self, src_path: Path, dst_path: Path, format_name: str):
-        """Update dataset configuration files"""
+
+    def _update_dataset_config(
+        self,
+        src_path: Path,
+        dst_path: Path,
+        format_name: str,
+        splits: List[str] = None,
+    ):
+        """Update dataset configuration files, using split paths when splits are present."""
         if format_name in ["yolo", "yolov5", "yolov8", "yolov9", "yolov10", "yolov11", "yolov12"]:
-            # Update YOLO yaml
             for yaml_file in dst_path.glob("*.yaml"):
                 import yaml
                 with open(yaml_file) as f:
                     config = yaml.safe_load(f) or {}
-                
+
                 config["path"] = str(dst_path.absolute())
-                config["train"] = "images"
-                config["val"] = "images"
-                
+
+                if splits:
+                    # Map "valid" -> "val" in the YAML key
+                    key_map = {"valid": "val"}
+                    written: set = set()
+                    for split in splits:
+                        key = key_map.get(split, split)
+                        if key not in written:
+                            config[key] = f"{split}/images"
+                            written.add(key)
+                    # Remove stale flat-image references for splits not present
+                    for stale in ["train", "val", "test"]:
+                        if stale not in written and config.get(stale) == "images":
+                            del config[stale]
+                else:
+                    config["train"] = "images"
+                    config["val"] = "images"
+
                 with open(yaml_file, "w") as f:
                     yaml.dump(config, f, default_flow_style=False)

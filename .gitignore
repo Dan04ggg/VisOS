@@ -18,9 +18,14 @@ backend/runs/
 .claude/
  
  
+# Model weights (should live in backend/workspace/models/ which is already ignored above)
+*.pt
+*.pth
+
 # Misc
 .env
 .DS_Store
 .pids.json
 *.tsbuildinfo
+*.bak
  

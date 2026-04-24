@@ -1372,7 +1372,7 @@ class ModelManager:
                             try:
                                 from ultralytics import YOLOWorld
                                 # Use the small variant (~100 MB); ultralytics caches it
-                                world = YOLOWorld("yolov8s-worldv2.pt")
+                                world = YOLOWorld(str(self.models_dir / "yolov8s-worldv2.pt"))
                                 self._apply_device_to_model(world)
                                 world.set_classes(texts)
                                 det = world(
@@ -1403,17 +1403,41 @@ class ModelManager:
                                 print(f"[text_seg] YOLO-World stage failed: {yolo_world_err}")
 
                     elif prompt_point is not None:
-                        # Point-prompted: clicked pixel coordinates (normalized → pixel)
-                        px = int(prompt_point[0] * w)
-                        py = int(prompt_point[1] * h)
-                        results = model(str(image_path), points=[[px, py]], labels=[1], verbose=False, device=device)
-                        for result in results:
-                            if result.masks is None:
-                                continue
-                            for mask_xy in result.masks.xy:
-                                ann = _mask_xy_to_annotation(mask_xy)
-                                if ann:
-                                    annotations.append(ann)
+                        # Point-prompted: normalized → pixel, clamped to image bounds
+                        px = max(0, min(int(prompt_point[0] * w), w - 1))
+                        py = max(0, min(int(prompt_point[1] * h), h - 1))
+                        try:
+                            results = model(
+                                str(image_path),
+                                points=np.array([[px, py]]),
+                                labels=np.array([1]),
+                                verbose=False, device=device,
+                            )
+                            for result in results:
+                                if result.masks is None:
+                                    continue
+                                for mask_xy in result.masks.xy:
+                                    ann = _mask_xy_to_annotation(mask_xy)
+                                    if ann:
+                                        annotations.append(ann)
+                        except Exception as _pt_err:
+                            print(f"[sam_point] point prompt failed: {_pt_err}")
+                        # Box fallback: small region around click if point gave no masks
+                        if not annotations:
+                            pad = max(w, h) // 20
+                            bboxes = [[max(0, px - pad), max(0, py - pad),
+                                       min(w, px + pad), min(h, py + pad)]]
+                            try:
+                                results = model(str(image_path), bboxes=bboxes, verbose=False, device=device)
+                                for result in results:
+                                    if result.masks is None:
+                                        continue
+                                    for mask_xy in result.masks.xy:
+                                        ann = _mask_xy_to_annotation(mask_xy)
+                                        if ann:
+                                            annotations.append(ann)
+                            except Exception as _box_err:
+                                print(f"[sam_point] bbox fallback failed: {_box_err}")
 
                     else:
                         # No prompt — segment everything (grid/automatic mode)
@@ -1551,33 +1575,57 @@ class ModelManager:
             try:
                 import torch
                 texts = [t.strip() for t in text_prompt.split(",") if t.strip()] if text_prompt else ["object"]
-                model.set_classes(texts)
-                # set_classes computes text embeddings via CLIP on CPU; move the entire
-                # model (including all text tensors) to the inference device.
-                if device != "cpu":
-                    target_device = f"cuda:{device}" if isinstance(device, int) else str(device)
-                    try:
-                        # Move the full model graph — this covers txt_feats, txt_pe and
-                        # any other tensors that set_classes() computed on CPU.
-                        for container in [
-                            getattr(model, "model", None),
-                            getattr(getattr(model, "predictor", None), "model", None),
-                        ]:
-                            if container is not None:
+
+                # Only re-encode text when the prompt actually changes.
+                # On webcam every frame has the same prompt — skipping set_classes()
+                # avoids the repeated CUDA↔CPU round-trip entirely.
+                _cached = getattr(model, "_yw_cached_texts", None)
+                if texts != _cached:
+                    _world_containers = [
+                        getattr(model, "model", None),
+                        getattr(getattr(model, "predictor", None), "model", None),
+                    ]
+                    for _c in _world_containers:
+                        if _c is None:
+                            continue
+                        # Walk named_children() for any clip/txt submodule (belt-and-suspenders)
+                        try:
+                            for _cname, _cm in _c.named_children():
+                                if "clip" in _cname.lower() or "txt" in _cname.lower():
+                                    try:
+                                        _cm.cpu()
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                        # Direct attribute fallback for older ultralytics layouts
+                        for _clip_attr in ("clip_model", "txt_model"):
+                            _cm = getattr(_c, _clip_attr, None)
+                            if _cm is not None:
                                 try:
-                                    container.to(target_device)
+                                    _cm.cpu()
                                 except Exception:
                                     pass
-                                # Belt-and-suspenders: also move individual text attrs
-                                for attr in ("txt_feats", "txt_pe"):
-                                    val = getattr(container, attr, None)
-                                    if val is not None:
-                                        try:
-                                            setattr(container, attr, val.to(target_device))
-                                        except Exception:
-                                            pass
-                    except Exception:
-                        pass
+
+                    model.set_classes(texts)
+                    model._yw_cached_texts = texts
+
+                    # Move only the computed text embeddings to the inference device.
+                    # Do NOT call container.to(device) — that drags clip_model to CUDA
+                    # and breaks the next set_classes() call.
+                    if device != "cpu":
+                        target_device = f"cuda:{device}" if isinstance(device, int) else str(device)
+                        for _c in _world_containers:
+                            if _c is None:
+                                continue
+                            for _attr in ("txt_feats", "txt_pe"):
+                                _val = getattr(_c, _attr, None)
+                                if _val is not None:
+                                    try:
+                                        setattr(_c, _attr, _val.to(target_device))
+                                    except Exception:
+                                        pass
+
                 results = model(str(image_path), conf=confidence_threshold, verbose=False, device=device)
                 for result in results:
                     boxes = result.boxes

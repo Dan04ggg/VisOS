@@ -156,10 +156,10 @@ function AnnotationCanvas({
   return (
     <canvas
       ref={canvasRef}
-      width={480}
-      height={360}
+      width={320}
+      height={240}
       className="w-full rounded-lg border border-border object-contain bg-muted/30"
-      style={{ aspectRatio: '4/3' }}
+      style={{ aspectRatio: '4/3', maxHeight: '220px' }}
     />
   )
 }
@@ -250,15 +250,19 @@ export function YamlWizardView({ selectedDataset, apiUrl }: { selectedDataset: D
     const commitLabel = () => {
       const trimmed = nameInput.trim()
       if (!trimmed) return
-      setClassNames(prev => ({ ...prev, [currentClassEntry.class_id]: trimmed }))
+      const newNames = { ...classNames, [currentClassEntry.class_id]: trimmed }
+      setClassNames(newNames)
 
-      // If there are more classes, move to next
       const nextIdx = currentClassIdx + 1
       if (nextIdx < wizardData.classes.length) {
         const nextClass = wizardData.classes[nextIdx]
         setCurrentClassIdx(nextIdx)
         setCurrentSampleIdx(0)
-        setNameInput(classNames[nextClass.class_id] ?? nextClass.existing_name ?? '')
+        setNameInput(newNames[nextClass.class_id] ?? nextClass.existing_name ?? '')
+      } else {
+        // Last class — advance to verify if all are named
+        const allDone = wizardData.classes.every(c => !!newNames[c.class_id]?.trim())
+        if (allDone) setPhase('verifying')
       }
     }
 

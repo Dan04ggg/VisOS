@@ -2,7 +2,40 @@
 
 # VisOS
 
-The all-in-one local workbench for computer vision datasets. Annotate, convert, augment, merge, and train — without touching a cloud service or writing a line of code.
+The all-in-one local workbench for computer vision datasets. Annotate, convert, augment, merge, train, and run inference — without touching a cloud service or writing a line of code.
+
+---
+
+## What's New
+
+### v2.0 — Major Update
+
+**Live Inference**
+Run trained YOLO models (and zero-shot models) on images, video files, or a live webcam stream directly from the app. Multi-object tracking, per-frame FPS counter, and downloadable annotated outputs.
+
+**Head-to-Head Model Evaluation**
+Compare any combination of custom training runs and imported model files side-by-side on any loaded dataset. Metrics include mAP@50, mAP@50-95, Precision, Recall, Fitness, Latency, and FPS, with rank highlighting and a bar chart summary.
+
+**OWL-ViT Auto-Annotation**
+OWL-ViT (Base/Large) is now supported for zero-shot auto-annotation via text prompt — no labelled training data required.
+
+**RT-DETR Training & Auto-Annotation**
+RT-DETR (L/X) is now a first-class training architecture and can be used for auto-annotation alongside YOLO and GroundingDINO.
+
+**Persistent Training Sessions**
+Training jobs survive app restarts. Close and relaunch VisOS and your active or paused training run is right where you left off — metrics, checkpoints, and all.
+
+**Persistent Annotation Jobs**
+Annotation jobs are now resumable. If you close the app mid-run, the job picks up from the last completed image on next launch.
+
+**Expanded Model Support**
+YOLO11 (n/s/m/l/x, seg, cls variants), YOLO12 (n/s/m/l/x), and YOLO-World v2 (S/M/L) are all downloadable from the Model Manager.
+
+**Refactored Backend**
+The monolithic `main.py` has been split into a proper package with dedicated routers, a centralised config singleton, and clean startup/workspace modules. This makes the codebase significantly easier to extend and debug.
+
+**Settings UI**
+All previously environment-only config (dataset/model/output paths, GPU device, backend URL) is now manageable through a full Settings view in the app.
 
 ---
 
@@ -78,7 +111,7 @@ Canvas-based editor with six tools:
 
 Full undo/redo. Annotations save automatically.
 
-**Auto-annotation:** load any YOLO, RT-DETR, RF-DETR, SAM, SAM 2/2.1/3, GroundingDINO, or OWL-ViT model and run inference directly on your dataset with a configurable confidence threshold. GroundingDINO and OWL-ViT support zero-shot annotation via text prompt.
+**Auto-annotation:** load any YOLO, RT-DETR, RF-DETR, SAM, SAM 2/2.1/3, GroundingDINO, or OWL-ViT model and run inference directly on your dataset with a configurable confidence threshold. GroundingDINO and OWL-ViT support zero-shot annotation via text prompt. Auto-annotation jobs are **persistent** — close and relaunch the app and any in-progress job resumes from where it left off.
 
 ---
 
@@ -155,7 +188,7 @@ Combine multiple datasets with a class-mapping UI to resolve naming conflicts be
 Download pretrained weights from inside the app or import your own `.pt`, `.pth`, or `.onnx` file. Load and unload models to manage GPU memory.
 
 **Available pretrained models:**  
-YOLOv5 (n/s) · YOLOv8 (n/s/m/l/x, seg, cls variants) · YOLOv9 (n/s/m/c/e) · YOLOv10 (n/s/m/b/l/x) · RT-DETR (L/X) · RF-DETR (Base/Large) · SAM ViT-B/L · SAM 2 (Tiny/Small/Base+/Large) · SAM 2.1 (Tiny/Small/Base+/Large) · SAM 3 · GroundingDINO (Tiny/Base, zero-shot) · OWL-ViT (Base/Large, zero-shot)
+YOLOv5 (n/s) · YOLOv8 (n/s/m/l/x, seg, cls variants) · YOLOv9 (n/s/m/c/e) · YOLOv10 (n/s/m/b/l/x) · YOLO11 (n/s/m/l/x, seg, cls variants) · YOLO12 (n/s/m/l/x) · RT-DETR (L/X) · RF-DETR (Base/Large) · SAM ViT-B/L · SAM 2 (Tiny/Small/Base+/Large) · SAM 2.1 (Tiny/Small/Base+/Large) · SAM 3 · GroundingDINO (Tiny/Base, zero-shot) · OWL-ViT (Base/Large, zero-shot) · YOLO-World v2 (S/M/L, zero-shot open-vocabulary)
 
 ![Model management view with download and import options, loaded model shown with GPU memory usage](assets/images/model_management.png)
 
@@ -163,9 +196,10 @@ YOLOv5 (n/s) · YOLOv8 (n/s/m/l/x, seg, cls variants) · YOLOv9 (n/s/m/c/e) · Y
 
 ### Training
 
-Train locally with live metric monitoring. Supports detection, instance segmentation, and classification tasks.
+Train locally with live metric monitoring. Training sessions are **persistent** — if you close or restart the app, your run resumes automatically with full metric history and checkpoint state intact.
 
-**Architectures:** YOLOv8 · YOLOv9 · YOLOv10 · RF-DETR  
+**Architectures:** YOLOv8 · YOLOv9 · YOLOv10 · YOLO11 · YOLO12 · RT-DETR  
+**Tasks:** Detection · Instance Segmentation · Classification  
 **Configurable:** epochs, batch size, image size, learning rate, early-stopping patience  
 **Live:** loss, accuracy, validation loss, GPU usage, ETA  
 **Controls:** pause, resume, stop with checkpoint saving  
@@ -175,9 +209,46 @@ Train locally with live metric monitoring. Supports detection, instance segmenta
 
 ---
 
+### Inference
+
+Run any loaded model against images, video files, or a live webcam stream. Supports standard YOLO models and smart zero-shot models from the model library.
+
+**Smart models:** SAM · SAM 2/2.1/3 · YOLO-World · GroundingDINO · OWL-ViT — all downloadable from the built-in catalog and loadable without leaving the Inference view.
+
+**Prompting:** text prompt support for YOLO-World, GroundingDINO, and OWL-ViT; point prompt support for SAM variants.
+
+**Tasks:** Detection · Segmentation · Pose/Keypoints · Tracking
+
+**Multi-object tracking algorithms:** ByteTrack · BoTSORT · DeepOCSORT · StrongSORT · OCSORT (with ReID)
+
+**Controls:** live FPS counter · frame dropout to prevent queue buildup · download annotated result images or frames
+
+---
+
+### Evaluate
+
+Head-to-head comparison of multiple models on any loaded dataset. Add models from your training runs or by pasting a file path.
+
+**Metrics:** mAP@50 · mAP@50-95 · Precision · Recall · Fitness · Latency (ms) · FPS  
+**Display:** results table with gold/silver/bronze/worst rank highlighting · bar chart visual summary  
+**Configure:** confidence threshold · IoU threshold · image size · eval split (val/test/train)
+
+---
+
 ### Batch Jobs
 
-Track and manage background auto-annotation jobs. Resume interrupted jobs, preview annotated images inline, and monitor per-image progress.
+Track and manage background auto-annotation jobs. Resume interrupted jobs (including across app restarts), preview annotated images inline, and monitor per-image progress.
+
+---
+
+### Settings
+
+All configuration is now manageable from a dedicated Settings view — no environment variables needed.
+
+- Custom datasets, models, and output folder paths with an in-app folder browser dialog
+- GPU toggle and device selector
+- Server restart and shutdown buttons
+- Theme/appearance switching
 
 ---
 
@@ -211,24 +282,35 @@ No required environment variables for local use. Backend URL defaults to `http:/
 
 ```
 cv-dataset-manager/
-├── run.py                    # Cross-platform process manager
+├── run.py                        # Cross-platform process manager
 ├── backend/
-│   ├── main.py               # FastAPI entrypoint and all routes
-│   ├── dataset_parsers.py    # Format auto-detection and parsing
-│   ├── format_converter.py   # Cross-format conversion
-│   ├── annotation_tools.py   # Annotation read/write logic
-│   ├── augmentation.py       # Augmentation pipeline engine
-│   ├── dataset_merger.py     # Merge with class mapping
-│   ├── model_integration.py  # Model download, load/unload, inference
-│   ├── training.py           # Training job management and metric streaming
-│   ├── video_utils.py        # Frame extraction, duplicate detection, CLIP
+│   ├── main.py                   # FastAPI entrypoint
+│   ├── routers/                  # Route modules (datasets, inference, evaluation,
+│   │                             #   training, models, augmentation, video, health,
+│   │                             #   snapshots, settings, formats, annotations)
+│   ├── config/
+│   │   └── settings.py           # Centralised config singleton — paths, service
+│   │                             #   singletons, shared mutable state
+│   ├── core/
+│   │   ├── startup.py            # Startup logic (workspace scan, dataset re-registration)
+│   │   └── workspace.py          # Workspace helpers
+│   ├── schemas/
+│   │   └── common.py             # Shared Pydantic schemas
+│   ├── dataset_parsers.py        # Format auto-detection and parsing
+│   ├── format_converter.py       # Cross-format conversion
+│   ├── annotation_tools.py       # Annotation read/write logic
+│   ├── augmentation.py           # Augmentation pipeline engine
+│   ├── dataset_merger.py         # Merge with class mapping
+│   ├── model_integration.py      # Model download, load/unload, inference
+│   ├── training.py               # Training job management and metric streaming
+│   ├── video_utils.py            # Frame extraction, duplicate detection, CLIP
 │   └── requirements.txt
-└── components/               # React views (one per sidebar section)
+└── components/                   # React views (one per sidebar section)
 ```
 
 **Proxy pattern:** Next.js API routes in `app/api/backend/` forward all requests to FastAPI, eliminating CORS issues. The frontend only ever talks to `localhost:3000`.
 
-**Persistence:** Datasets survive restarts via `dataset_metadata.json` sidecars. On startup the backend scans `workspace/datasets/` and re-registers everything it finds.
+**Persistence:** Datasets survive restarts via `dataset_metadata.json` sidecars. Training and auto-annotation jobs persist their state to disk and resume automatically on next launch. On startup the backend scans `workspace/datasets/` and re-registers everything it finds.
 
 **Process manager:** `run.py` handles cross-platform PID tracking, port cleanup, and log streaming — no Docker required.
 
@@ -249,9 +331,17 @@ Interactive docs: `http://localhost:8000/docs`
 | Video | `POST /video/extract` |
 | Duplicates | `POST /datasets/{id}/find-duplicates` · `/remove-duplicates` |
 | Models | `GET /models` · `POST /models/download` · `POST /models/import` · `POST /models/{id}/load` · `POST /models/{id}/unload` |
-| Auto-annotation | `POST /datasets/{id}/auto-annotate` · `GET /api/auto-annotate/jobs` |
+| Auto-annotation | `POST /datasets/{id}/auto-annotate` · `GET /auto-annotate/jobs` |
 | Training | `POST /training/start` · `GET /training/{job_id}/status` · `/pause` · `/resume` · `/stop` |
-| System | `GET /api/health` |
+| Inference (YOLO) | `POST /infer/image` · `POST /infer/video` · `POST /infer/frame` · `GET /infer/models` |
+| Inference (Smart) | `GET /infer/smart/catalog` · `POST /infer/smart/load` · `POST /infer/smart/image` · `POST /infer/smart/frame` |
+| Video job | `GET /infer/video/{job_id}/status` · `GET /infer/video/{job_id}/result` |
+| Webcam session | `DELETE /infer/session/{session_id}` |
+| Evaluation | `POST /evaluate` · `GET /evaluate/{job_id}/status` |
+| Settings | `GET /settings` · `POST /settings` |
+| Server control | `POST /restart` · `POST /shutdown` |
+| Folder browser | `POST /browse-folders` |
+| System | `GET /health` |
 
 ---
 

@@ -20,6 +20,7 @@ interface SplitViewProps {
   datasets: Dataset[]
   setDatasets: (datasets: Dataset[]) => void
   selectedDataset: Dataset | null
+  onDatasetCreated?: (dataset: Dataset) => void
   apiUrl: string
 }
 
@@ -37,7 +38,7 @@ interface SplitResult {
   test_count: number
 }
 
-export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: SplitViewProps) {
+export function SplitView({ datasets, setDatasets, selectedDataset, onDatasetCreated, apiUrl }: SplitViewProps) {
   const [splitConfig, setSplitConfig] = useState<SplitConfig>({ train: 70, val: 20, test: 10 })
   const [outputName, setOutputName] = useState('')
   const [isSplitting, setIsSplitting] = useState(false)
@@ -115,7 +116,7 @@ export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: Sp
       }
 
       const data = await response.json()
-      
+
       if (data.success) {
         setResult({
           success: true,
@@ -130,6 +131,10 @@ export function SplitView({ datasets, setDatasets, selectedDataset, apiUrl }: Sp
         if (datasetsResponse.ok) {
           const datasetsData = await datasetsResponse.json()
           setDatasets(datasetsData.datasets || [])
+        }
+
+        if (data.new_dataset && onDatasetCreated) {
+          onDatasetCreated(data.new_dataset)
         }
       }
     } catch (err) {

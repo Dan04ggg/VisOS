@@ -17,6 +17,7 @@ pandas>=2.0.0
 
 # ML Models - Required for model downloading and training
 ultralytics>=8.1.0  # YOLO models - auto-installed if missing
+lap>=0.5.12         # Required by Ultralytics for multi-object tracking (ByteTrack, BoTSORT, etc.)
 # torch>=2.0.0  # Usually installed with ultralytics
 # torchvision>=0.15.0
 

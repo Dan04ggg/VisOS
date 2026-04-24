@@ -35,6 +35,7 @@ interface AugmentationViewProps {
   selectedDataset: Dataset | null
   datasets: Dataset[]
   setDatasets: (datasets: Dataset[]) => void
+  onDatasetCreated?: (dataset: Dataset) => void
   apiUrl: string
 }
 
@@ -184,6 +185,7 @@ export function AugmentationView({
   selectedDataset,
   datasets,
   setDatasets,
+  onDatasetCreated,
   apiUrl
 }: AugmentationViewProps) {
   const [config, setConfig] = useState<AugmentationConfig>(defaultConfig)
@@ -252,15 +254,11 @@ export function AugmentationView({
     setProgress(0)
     setMessage(null)
 
-    const progressInterval = setInterval(() => {
-      setProgress(prev => Math.min(prev + 4, 88))
-    }, 600)
-
     try {
       const body: Record<string, unknown> = {
         dataset_id: selectedDataset.id,
         config,
-        output_name: outputName || `${selectedDataset.name}_augmented`
+        output_name: outputName || `${selectedDataset.name}_augmented`,
       }
       if (sizeMode === 'factor') {
         body.augment_factor = augmentFactor
@@ -271,30 +269,46 @@ export function AugmentationView({
         body.class_targets = classTargets
       }
 
-      const response = await fetch(`${apiUrl}/api/augment`, {
+      const startResp = await fetch(`${apiUrl}/api/augment`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
       })
 
-      clearInterval(progressInterval)
-
-      if (response.ok) {
-        setProgress(100)
-        const data = await response.json()
-        if (data.new_dataset) {
-          setDatasets([...datasets, data.new_dataset])
-        }
-        setMessage({
-          type: 'success',
-          text: `Created augmented dataset with ${data.total_images} images`
-        })
-      } else {
-        const err = await response.json().catch(() => ({}))
+      if (!startResp.ok) {
+        const err = await startResp.json().catch(() => ({}))
         throw new Error(err.detail || 'Augmentation failed')
       }
+
+      const { job_id } = await startResp.json()
+
+      await new Promise<void>((resolve) => {
+        const poll = setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${apiUrl}/api/augment/${job_id}/status`)
+            if (!statusResp.ok) return
+            const job = await statusResp.json()
+            setProgress(job.progress ?? 0)
+
+            if (job.status === 'done') {
+              clearInterval(poll)
+              setProgress(100)
+              if (job.new_dataset) {
+                setDatasets([...datasets, job.new_dataset])
+                onDatasetCreated?.(job.new_dataset)
+              }
+              setMessage({ type: 'success', text: `Created augmented dataset with ${job.total_images} images` })
+              resolve()
+            } else if (job.status === 'error') {
+              clearInterval(poll)
+              setMessage({ type: 'error', text: job.error || 'Augmentation failed' })
+              setProgress(0)
+              resolve()
+            }
+          } catch (_) {}
+        }, 500)
+      })
     } catch (err: unknown) {
-      clearInterval(progressInterval)
       setMessage({ type: 'error', text: err instanceof Error ? err.message : 'Augmentation failed' })
     }
     setIsAugmenting(false)

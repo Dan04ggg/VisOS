@@ -11,10 +11,10 @@ import { Switch } from "@/components/ui/switch"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Input } from "@/components/ui/input"
-import { 
-  Play, 
-  Pause, 
-  Square, 
+import {
+  Play,
+  Pause,
+  Square,
   Cpu,
   Settings2,
   Terminal,
@@ -26,7 +26,9 @@ import {
   ChevronDown,
   LineChart as LineChartIcon,
   FileDown,
-  Package
+  Package,
+  Trash2,
+  FolderOpen,
 } from "lucide-react"
 import {
   LineChart,
@@ -57,6 +59,7 @@ interface EpochRecord {
   precision: number
   recall: number
   speed_ms: number
+  its?: number
   gpu_mem_gb?: number
   // segmentation extras
   train_seg_loss?: number
@@ -68,6 +71,14 @@ interface LogEntry {
   timestamp: string
   message: string
   type: "info" | "warning" | "error" | "success"
+}
+
+interface BatchStats {
+  epoch: number
+  batch: number
+  total_batches: number
+  its: number
+  losses: Record<string, number>
 }
 
 /** Shape returned by GET /api/train/:id/status */
@@ -84,6 +95,7 @@ interface TrainingStatus {
   gpu_mem_gb: number | null
   started_at: string
   model_path: string | null
+  batch_stats: BatchStats | null
   logs: string[]
   error?: string
 }
@@ -226,6 +238,9 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   const [imgSize, setImgSize]         = useState(640)
   const [usePretrained, setUsePretrained] = useState(true)
 
+  // Save-period
+  const [savePeriod, setSavePeriod]       = useState(0)  // 0 = disabled
+
   // Advanced hyperparams
   const [lr0, setLr0]                     = useState(0.01)
   const [lrf, setLrf]                     = useState(0.01)
@@ -275,9 +290,13 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
     current_epoch: number; total_epochs: number; model_type: string
     started_at: string; model_path: string | null; last_checkpoint?: string | null
   }
-  const [pastRuns, setPastRuns]       = useState<RunSummary[]>([])
+  interface CheckpointInfo { name: string; path: string; size_mb: number }
+  const [pastRuns, setPastRuns]           = useState<RunSummary[]>([])
+  const [checkpoints, setCheckpoints]         = useState<CheckpointInfo[]>([])
+  const [checkpointRunId, setCheckpointRunId] = useState<string | null>(null)
   const [deviceInfo, setDeviceInfo]   = useState<string | null>(null)
   const [liveGpuMem, setLiveGpuMem]   = useState<number | null>(null)
+  const [batchStats, setBatchStats]   = useState<BatchStats | null>(null)
 
   // Real system stats — polled from /api/system while training
   const [cpuUsage, setCpuUsage]         = useState(0)
@@ -396,7 +415,8 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         // Always populate the past-runs list
         setPastRuns(jobs)
 
-        // Restore the most recent active job into the main view
+        // Only auto-restore a job that is actively running — do NOT auto-continue
+        // paused/interrupted runs; user must explicitly click "Load & Resume".
         const active = jobs.find(j =>
           j.status === 'running' || j.status === 'starting' || j.status === 'pausing'
         )
@@ -409,51 +429,8 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           setCurrentEpoch(active.current_epoch ?? 0)
           setTotalEpochs(active.total_epochs ?? 100)
           setStatusLabel(active.status === 'pausing' ? 'Finishing epoch…' : 'Running')
-          addLog(`Restored training job "${active.name}" (id: ${active.id})`, 'info')
+          addLog(`Restored running job "${active.name}" (id: ${active.id})`, 'info')
           return
-        }
-
-        // Restore paused job into the main view so the user can resume it
-        const paused = jobs.find(j => j.status === 'paused')
-        if (paused) {
-          setTrainingId(paused.id)
-          setIsTraining(false)
-          setIsPaused(true)
-          setProgress(paused.progress ?? 0)
-          setCurrentEpoch(paused.current_epoch ?? 0)
-          setTotalEpochs(paused.total_epochs ?? 100)
-          setStatusLabel('Paused')
-          if (paused.model_path) setModelPath(paused.model_path)
-          addLog(`Restored paused run "${paused.name}" (id: ${paused.id}) — click Resume to continue`, 'info')
-          return
-        }
-
-        // Restore interrupted job
-        const interrupted = jobs.find(j => j.status === 'interrupted')
-        if (interrupted) {
-          setTrainingId(interrupted.id)
-          setIsTraining(false)
-          setIsPaused(true)   // allow Resume button
-          setProgress(interrupted.progress ?? 0)
-          setCurrentEpoch(interrupted.current_epoch ?? 0)
-          setTotalEpochs(interrupted.total_epochs ?? 100)
-          setStatusLabel('Interrupted')
-          if (interrupted.model_path) setModelPath(interrupted.model_path)
-          addLog(`Run "${interrupted.name}" was interrupted by a backend restart — click Resume to continue`, 'warning')
-          return
-        }
-
-        // Fallback: last known completed/failed job from localStorage
-        const savedId = localStorage.getItem('cvdm_training_id')
-        if (savedId) {
-          const last = jobs.find(j => j.id === savedId)
-          if (last && (last.status === 'completed' || last.status === 'failed' || last.status === 'stopped')) {
-            setTrainingId(savedId)
-            setIsTraining(false)
-            setProgress(last.progress ?? 0)
-            setStatusLabel(last.status.charAt(0).toUpperCase() + last.status.slice(1))
-            if (last.model_path) setModelPath(last.model_path)
-          }
         }
       } catch { /* backend not reachable yet */ }
     }
@@ -481,9 +458,10 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         setTotalEpochs(data.total_epochs)
         setProgress(data.progress)
 
-        // Sync device info and live GPU memory
+        // Sync device info, live GPU memory, and batch stats
         if (data.device_info) setDeviceInfo(data.device_info)
         if (data.gpu_mem_gb != null) setLiveGpuMem(data.gpu_mem_gb)
+        if (data.batch_stats) setBatchStats(data.batch_stats)
 
         // Replace epoch history wholesale (backend is authoritative)
         if (data.epoch_history && data.epoch_history.length > 0) {
@@ -507,7 +485,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           // keep polling — backend will transition to "paused" when the epoch completes
         } else if (data.status === "completed") {
           failedPollCount.current = 0
-          setIsTraining(false); setIsPausing(false)
+          setIsTraining(false); setIsPausing(false); setBatchStats(null)
           if (data.model_path) setModelPath(data.model_path)
           addLog("Training completed successfully! Model saved.", "success")
           setStatusLabel("Completed")
@@ -517,7 +495,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
         } else if (data.status === "failed") {
           // Poll a couple more times to flush any final log lines, then stop.
           failedPollCount.current += 1
-          setIsTraining(false); setIsPausing(false)
+          setIsTraining(false); setIsPausing(false); setBatchStats(null)
           if (data.model_path) setModelPath(data.model_path)
           setError(data.error ?? "Unknown error")
           setStatusLabel("Failed")
@@ -528,7 +506,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           }
         } else if (data.status === "stopped") {
           failedPollCount.current = 0
-          setIsTraining(false); setIsPausing(false)
+          setIsTraining(false); setIsPausing(false); setBatchStats(null)
           if (data.model_path) setModelPath(data.model_path)
           addLog("Training was stopped.", "warning")
           setStatusLabel("Stopped")
@@ -537,7 +515,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           fetch(`${apiUrl}/api/train/jobs`).then(r => r.json()).then(d => setPastRuns(d.jobs || [])).catch(() => {})
         } else if (data.status === "paused") {
           failedPollCount.current = 0
-          setIsTraining(false); setIsPausing(false); setIsPaused(true)
+          setIsTraining(false); setIsPausing(false); setIsPaused(true); setBatchStats(null)
           if (data.model_path) setModelPath(data.model_path)
           addLog("Epoch complete — training paused. Click Resume to continue.", "info")
           setStatusLabel("Paused")
@@ -605,12 +583,16 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
       }
     }
 
-    // Reset all runtime state
+    // Clear trainingId FIRST so that when isPaused becomes false the polling
+    // effect sees !trainingId and stops immediately, preventing a race where
+    // the previous job is re-polled and restores its stale epoch/metrics.
+    setTrainingId(null)
     setMetrics([])
     setLogs([])
     setError(null)
     setModelPath(null)
     setCurrentEpoch(0)
+    setTotalEpochs(epochs)
     setProgress(0)
     setDeviceInfo(null)
     setLiveGpuMem(null)
@@ -618,6 +600,8 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
     failedPollCount.current = 0
     setIsPaused(false)
     setIsPausing(false)
+    setIsTraining(false)
+    setBatchStats(null)
     setStatusLabel("Starting…")
 
     const backendModelType = getModelType(modelArch)
@@ -636,6 +620,7 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
           image_size: imgSize,
           pretrained: usePretrained,
           device: "auto",
+          save_period: savePeriod,
           // Advanced hyperparams
           lr0,
           lrf,
@@ -734,6 +719,38 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
     }
   }
 
+  async function handleDeleteRun(id: string) {
+    if (!confirm("Delete this run from the list? (Model weight files are kept on disk.)")) return
+    try {
+      const res = await fetch(`${apiUrl}/api/train/${id}`, { method: "DELETE" })
+      if (res.ok) {
+        setPastRuns(prev => prev.filter(r => r.id !== id))
+        if (trainingId === id) {
+          setTrainingId(null)
+          setIsPaused(false)
+          setStatusLabel("")
+        }
+      } else {
+        const err = await res.json().catch(() => ({ detail: "Delete failed" }))
+        addLog(`Delete failed: ${err.detail}`, "error")
+      }
+    } catch (e) {
+      addLog(`Delete request failed: ${e instanceof Error ? e.message : e}`, "error")
+    }
+  }
+
+  async function handleLoadCheckpoints(id: string) {
+    if (checkpointRunId === id) { setCheckpointRunId(null); return }
+    try {
+      const res = await fetch(`${apiUrl}/api/train/${id}/checkpoints`)
+      if (res.ok) {
+        const data = await res.json()
+        setCheckpoints(data.checkpoints || [])
+        setCheckpointRunId(id)
+      }
+    } catch { /* ignore */ }
+  }
+
   function handleExportModel() {
     if (!trainingId) return
     window.open(`${apiUrl}/api/train/${trainingId}/export`, "_blank")
@@ -773,10 +790,14 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
   const etaDisplay = (() => {
     if (!isTraining || isPaused || isPausing || currentEpoch === 0) return null
     const remaining = totalEpochs - currentEpoch
-    // Use real speed_ms per iteration if available; rough fallback 30s/epoch
-    const secsPerEpoch = latestMetrics?.speed_ms
-      ? latestMetrics.speed_ms / 1000
-      : 30
+    let secsPerEpoch = 30
+    // Live: batch_stats has real it/s and total_batches → most accurate
+    if (batchStats && batchStats.its > 0 && batchStats.total_batches > 0) {
+      secsPerEpoch = batchStats.total_batches / batchStats.its
+    } else if (latestMetrics?.its) {
+      const nb = batchStats?.total_batches ?? 100
+      secsPerEpoch = nb / latestMetrics.its
+    }
     const total = remaining * secsPerEpoch
     const h = Math.floor(total / 3600)
     const m = Math.floor((total % 3600) / 60)
@@ -1090,6 +1111,14 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
                   <label className="text-xs text-muted-foreground">Mixed Precision (AMP)</label>
                   <Switch checked={amp} onCheckedChange={setAmp} disabled={isTraining} />
                 </div>
+                <div className="space-y-1">
+                  <div className="flex justify-between">
+                    <label className="text-xs text-muted-foreground">Save Checkpoint Every N Epochs</label>
+                    <span className="text-xs">{savePeriod === 0 ? "off" : `every ${savePeriod}`}</span>
+                  </div>
+                  <Slider value={[savePeriod]} onValueChange={([v]) => setSavePeriod(v)} min={0} max={50} step={1} disabled={isTraining} />
+                  <p className="text-[10px] text-muted-foreground/60">0 = only best &amp; last. Set to save epoch5.pt, epoch10.pt, etc.</p>
+                </div>
               </CollapsibleContent>
             </Collapsible>
 
@@ -1162,16 +1191,36 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">
                     Epoch {currentEpoch} / {totalEpochs}
+                    {batchStats && isTraining && (
+                      <span className="ml-2 text-xs text-muted-foreground/60">
+                        · Batch {batchStats.batch} / {batchStats.total_batches}
+                      </span>
+                    )}
                   </span>
                   <span className="text-sm text-muted-foreground flex items-center gap-3">
-                    {latestMetrics?.speed_ms != null && (
-                      <span className="font-mono text-xs">⚡ {latestMetrics.speed_ms.toFixed(0)} ms/iter</span>
-                    )}
+                    {batchStats && isTraining && batchStats.its > 0 ? (
+                      <span className="font-mono text-xs">⚡ {batchStats.its.toFixed(1)} it/s</span>
+                    ) : latestMetrics?.its ? (
+                      <span className="font-mono text-xs">⚡ {latestMetrics.its.toFixed(1)} it/s</span>
+                    ) : null}
                     {etaDisplay && `ETA: ${etaDisplay}`}
                     {isPaused && "Training paused — checkpoint saved"}
                   </span>
                 </div>
                 <Progress value={progress} className="h-2" />
+
+                {/* Live batch losses during training */}
+                {batchStats && isTraining && Object.keys(batchStats.losses).length > 0 && (
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-mono text-muted-foreground/80">
+                    <span className="text-muted-foreground/40">Live:</span>
+                    {Object.entries(batchStats.losses).map(([key, val]) => (
+                      <span key={key}>
+                        {key.replace(/_loss$/, "")}
+                        <span className="ml-1 text-foreground/60">{val.toFixed(4)}</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
 
                 {/* Train losses */}
                 <div>
@@ -1357,60 +1406,105 @@ export function TrainingView({ datasets = [], apiUrl = "http://localhost:8000" }
             <CollapsibleContent>
               <CardContent className="pt-0 space-y-2">
                 {pastRuns.map(run => (
-                  <div key={run.id} className="flex items-center gap-3 p-2 rounded-lg border border-border/40 bg-background/40">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium truncate">{run.name}</span>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] shrink-0 ${
-                            run.status === "completed"   ? "text-green-400 border-green-400/30" :
-                            run.status === "failed"      ? "text-red-400 border-red-400/30" :
-                            run.status === "paused"      ? "text-yellow-400 border-yellow-400/30" :
-                            run.status === "interrupted" ? "text-orange-400 border-orange-400/30" :
-                            run.status === "running" || run.status === "pausing" ? "text-blue-400 border-blue-400/30" :
-                            "text-muted-foreground"
-                          }`}
-                        >
-                          {run.status}
-                        </Badge>
-                        <span className="text-[10px] text-muted-foreground shrink-0">{run.model_type}</span>
-                      </div>
-                      <div className="flex items-center gap-2 mt-1">
-                        <div className="flex-1 h-1 rounded bg-muted overflow-hidden">
-                          <div className="h-full bg-primary/60 rounded" style={{ width: `${run.progress}%` }} />
+                  <div key={run.id} className="rounded-lg border border-border/40 bg-background/40 overflow-hidden">
+                    <div className="flex items-center gap-3 p-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium truncate">{run.name}</span>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] shrink-0 ${
+                              run.status === "completed"   ? "text-green-400 border-green-400/30" :
+                              run.status === "failed"      ? "text-red-400 border-red-400/30" :
+                              run.status === "paused"      ? "text-yellow-400 border-yellow-400/30" :
+                              run.status === "interrupted" ? "text-orange-400 border-orange-400/30" :
+                              run.status === "running" || run.status === "pausing" ? "text-blue-400 border-blue-400/30" :
+                              "text-muted-foreground"
+                            }`}
+                          >
+                            {run.status}
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground shrink-0">{run.model_type}</span>
                         </div>
-                        <span className="text-[10px] text-muted-foreground shrink-0">
-                          {run.current_epoch}/{run.total_epochs} ep
-                        </span>
-                        <span className="text-[10px] text-muted-foreground shrink-0">
-                          {new Date(run.started_at).toLocaleDateString()}
-                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                          <div className="flex-1 h-1 rounded bg-muted overflow-hidden">
+                            <div className="h-full bg-primary/60 rounded" style={{ width: `${run.progress}%` }} />
+                          </div>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {run.current_epoch}/{run.total_epochs} ep
+                          </span>
+                          <span className="text-[10px] text-muted-foreground shrink-0">
+                            {new Date(run.started_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Download best model */}
+                        {run.model_path && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0" title="Download best model"
+                            onClick={() => window.open(`${apiUrl}/api/train/${run.id}/export`, "_blank")}>
+                            <Download className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        {/* Show checkpoints */}
+                        {(run.status === "completed" || run.status === "paused" || run.status === "stopped") && (
+                          <Button size="sm" variant="ghost"
+                            className={`h-7 w-7 p-0 ${checkpointRunId === run.id ? "text-primary" : ""}`}
+                            title="View checkpoints"
+                            onClick={() => handleLoadCheckpoints(run.id)}>
+                            <FolderOpen className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
+                        {/* Load & Resume */}
+                        {(run.status === "paused" || run.status === "interrupted") && run.id !== trainingId && (
+                          <Button size="sm" variant="outline" className="gap-1 h-7 text-xs"
+                            onClick={() => {
+                              setTrainingId(run.id)
+                              setIsPaused(true)
+                              setIsPausing(false)
+                              setIsTraining(false)
+                              setProgress(run.progress)
+                              setCurrentEpoch(run.current_epoch)
+                              setTotalEpochs(run.total_epochs)
+                              setStatusLabel(run.status === "interrupted" ? "Interrupted" : "Paused")
+                              setMetrics([])
+                              setLogs([])
+                              seenLogCount.current = 0
+                              if (run.model_path) setModelPath(run.model_path)
+                            }}>
+                            <Play className="w-3 h-3" />
+                            Resume
+                          </Button>
+                        )}
+                        {/* Delete (only for finished runs) */}
+                        {run.status !== "running" && run.status !== "starting" && run.status !== "pausing" && (
+                          <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-red-400"
+                            title="Delete run" onClick={() => handleDeleteRun(run.id)}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        )}
                       </div>
                     </div>
-                    {(run.status === "paused" || run.status === "interrupted") && run.id !== trainingId && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="shrink-0 gap-1 h-7 text-xs"
-                        onClick={() => {
-                          setTrainingId(run.id)
-                          setIsPaused(true)
-                          setIsPausing(false)
-                          setIsTraining(false)
-                          setProgress(run.progress)
-                          setCurrentEpoch(run.current_epoch)
-                          setTotalEpochs(run.total_epochs)
-                          setStatusLabel(run.status === "interrupted" ? "Interrupted" : "Paused")
-                          setMetrics([])
-                          setLogs([])
-                          seenLogCount.current = 0
-                          if (run.model_path) setModelPath(run.model_path)
-                        }}
-                      >
-                        <Play className="w-3 h-3" />
-                        Load &amp; Resume
-                      </Button>
+                    {/* Checkpoint list inline */}
+                    {checkpointRunId === run.id && checkpoints.length > 0 && (
+                      <div className="border-t border-border/30 px-3 py-2 bg-muted/20">
+                        <p className="text-[10px] text-muted-foreground mb-1.5 font-medium">Checkpoints</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {checkpoints.map(cp => (
+                            <button key={cp.name}
+                              className="text-[10px] px-2 py-0.5 rounded bg-primary/10 text-primary hover:bg-primary/20 border border-primary/20 font-mono"
+                              onClick={() => window.open(`${apiUrl}/api/train/${run.id}/checkpoint/${cp.name}`, "_blank")}
+                              title={`${cp.size_mb} MB`}>
+                              {cp.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {checkpointRunId === run.id && checkpoints.length === 0 && (
+                      <div className="border-t border-border/30 px-3 py-2 text-[10px] text-muted-foreground">
+                        No epoch checkpoints found. Set "Save Every N Epochs" &gt; 0 before training to generate them.
+                      </div>
                     )}
                   </div>
                 ))}
@@ -1437,7 +1531,7 @@ function MetricCard({
   decimals?: number
 }) {
   const improved =
-    value !== undefined && prev !== undefined
+    value != null && prev != null
       ? lowerIsBetter ? value < prev : value > prev
       : null
 
@@ -1445,7 +1539,7 @@ function MetricCard({
     <div className="text-center p-3 rounded-lg bg-muted/30">
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
       <p className="text-lg font-semibold flex items-center justify-center gap-1">
-        {value !== undefined ? value.toFixed(decimals) : "—"}
+        {value != null ? value.toFixed(decimals) : "—"}
         {improved === true  && <TrendingDown className="w-3 h-3 text-green-500" />}
         {improved === false && <TrendingUp   className="w-3 h-3 text-red-400"   />}
       </p>

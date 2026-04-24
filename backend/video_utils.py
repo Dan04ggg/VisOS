@@ -26,7 +26,8 @@ class VideoFrameExtractor:
         start_time: float = 0,
         end_time: Optional[float] = None,
         image_format: str = "jpg",
-        quality: int = 95
+        quality: int = 95,
+        progress_callback=None
     ) -> Dict[str, Any]:
         """
         Extract every nth frame from a video file
@@ -73,40 +74,38 @@ class VideoFrameExtractor:
         start_frame = int(start_time * fps) if start_time > 0 else 0
         end_frame = int(end_time * fps) if end_time else total_frames
         end_frame = min(end_frame, total_frames)
-        
+
+        # Build list of frame positions to extract (direct seek = much faster)
+        frames_to_extract = list(range(start_frame, end_frame, max(1, nth_frame)))
+        if max_frames:
+            frames_to_extract = frames_to_extract[:max_frames]
+
+        total_to_extract = len(frames_to_extract)
         extracted_frames = []
-        frame_count = 0
-        current_frame = start_frame
-        
-        cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-        
-        while current_frame < end_frame:
-            if max_frames and frame_count >= max_frames:
-                break
-            
+
+        for i, frame_pos in enumerate(frames_to_extract):
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
             ret, frame = cap.read()
             if not ret:
                 break
-            
-            if (current_frame - start_frame) % nth_frame == 0:
-                # Save frame
-                frame_filename = f"frame_{current_frame:08d}.{image_format}"
-                frame_path = output_dir / frame_filename
-                
-                if image_format == "jpg":
-                    cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
-                else:
-                    cv2.imwrite(str(frame_path), frame)
-                
-                extracted_frames.append({
-                    "filename": frame_filename,
-                    "frame_number": current_frame,
-                    "timestamp": current_frame / fps if fps > 0 else 0
-                })
-                frame_count += 1
-            
-            current_frame += 1
-        
+
+            frame_filename = f"frame_{frame_pos:08d}.{image_format}"
+            frame_path = output_dir / frame_filename
+
+            if image_format == "jpg":
+                cv2.imwrite(str(frame_path), frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            else:
+                cv2.imwrite(str(frame_path), frame)
+
+            extracted_frames.append({
+                "filename": frame_filename,
+                "frame_number": frame_pos,
+                "timestamp": frame_pos / fps if fps > 0 else 0
+            })
+
+            if progress_callback and total_to_extract > 0:
+                progress_callback(int((i + 1) / total_to_extract * 100), i + 1)
+
         cap.release()
         
         return {

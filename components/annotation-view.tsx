@@ -127,6 +127,15 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   // Right sidebar tab: 'annotate' = auto-annotate settings, 'jobs' = batch job monitor
   const [sidebarTab, setSidebarTab] = useState<'annotate' | 'jobs'>('annotate')
 
+  // Resume-progress banner state
+  const [resumeBanner, setResumeBanner] = useState<{
+    imageId: string
+    imageName: string
+    imageIndex: number
+    split: string
+    classFilter: string
+  } | null>(null)
+
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const imageRef = useRef<HTMLImageElement | null>(null)
@@ -292,9 +301,36 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
     restore()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Save annotation progress to localStorage ─────────────────────────────────
+  useEffect(() => {
+    if (!selectedDataset || !currentImage) return
+    try {
+      localStorage.setItem(`cvdm_annotate_${selectedDataset.id}`, JSON.stringify({
+        imageId: currentImage.id,
+        imageName: currentImage.filename,
+        imageIndex: currentIndex,
+        split: selectedSplit,
+        classFilter: selectedClass,
+      }))
+    } catch {}
+  }, [currentIndex, currentImage?.id, selectedSplit, selectedClass]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Load image list ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!selectedDataset) return
+    // Check for saved progress (only when not externally directed to a specific image)
+    setResumeBanner(null)
+    if (!initialImageId) {
+      try {
+        const raw = localStorage.getItem(`cvdm_annotate_${selectedDataset.id}`)
+        if (raw) {
+          const saved = JSON.parse(raw)
+          if (saved.imageId && saved.imageIndex > 0) {
+            setResumeBanner(saved)
+          }
+        }
+      } catch {}
+    }
     const cached = imageCache[selectedDataset.id]
     if (cached && cached.length > 0) {
       initFromImages(cached)
@@ -1187,14 +1223,17 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
   }
 
   const textAnnotateBatch = async () => {
-    if (!selectedDataset || !selectedModel || !combinedPrompt || isStartingBatch) return
+    if (!selectedDataset || !selectedModel || isStartingBatch) return
+    const selModel = models.find(m => m.id === selectedModel)
+    const isTextModel = selModel && ['sam3', 'yoloworld', 'groundingdino', 'owlvit'].includes(selModel.type)
+    if (isTextModel && !combinedPrompt) return
     setIsStartingBatch(true)
     try {
       const params = new URLSearchParams({
         model_id: selectedModel,
-        text_prompt: combinedPrompt,
         confidence_threshold: String(confidence),
       })
+      if (combinedPrompt) params.set('text_prompt', combinedPrompt)
       const resp = await fetch(
         `${apiUrl}/api/auto-annotate/${selectedDataset.id}/text-batch?${params}`,
         { method: 'POST' }
@@ -1215,19 +1254,35 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
           annotated: 0,
           failed: 0,
           total_annotations: 0,
-          text_prompt: combinedPrompt,
+          text_prompt: combinedPrompt || '',
           started_at: new Date().toISOString(),
           dataset_id: selectedDataset.id,
           recent_images: [],
         },
       }))
-      toast.success(`Batch job started (${combinedPrompt})`)
+      toast.success(`Batch job started${combinedPrompt ? ` (${combinedPrompt})` : ''}`)
       setSidebarTab('jobs')
       _pollJob(job_id)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Batch annotation failed')
     } finally {
       setIsStartingBatch(false)
+    }
+  }
+
+  const deleteAllAnnotations = async () => {
+    if (!selectedDataset) return
+    if (!confirm(`Delete ALL annotations from "${selectedDataset.name}"? This cannot be undone.`)) return
+    if (!confirm(`Are you sure? All annotation labels in this dataset will be permanently cleared.`)) return
+    try {
+      const resp = await fetch(`${apiUrl}/api/datasets/${selectedDataset.id}/annotations`, { method: 'DELETE' })
+      if (!resp.ok) throw new Error('Failed to delete annotations')
+      setAnnotations([])
+      // Invalidate image cache so annotation counts refresh
+      updateImageCache(selectedDataset.id, [])
+      toast.success('All annotations deleted')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to delete annotations')
     }
   }
 
@@ -1373,7 +1428,29 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
 
   // ── Main UI ──────────────────────────────────────────────────────────────────
   return (
-    <div className="h-full flex">
+    <div className="h-full flex flex-col">
+      {/* Resume-progress banner */}
+      {resumeBanner && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 bg-blue-500/10 border-b border-blue-500/20 text-sm">
+          <span className="text-blue-400">
+            You were on image <strong>{resumeBanner.imageIndex + 1}</strong> — <span className="font-mono text-xs">{resumeBanner.imageName}</span>. Continue from here?
+          </span>
+          <div className="flex gap-2 flex-shrink-0">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => {
+              setResumeBanner(null)
+              try { localStorage.removeItem(`cvdm_annotate_${selectedDataset?.id}`) } catch {}
+            }}>Start from beginning</Button>
+            <Button size="sm" className="h-7 text-xs" onClick={() => {
+              if (!resumeBanner) return
+              setSelectedSplit(resumeBanner.split || 'all')
+              setSelectedClass(resumeBanner.classFilter || 'all')
+              initialImageIdRef.current = resumeBanner.imageId
+              setResumeBanner(null)
+            }}>Resume</Button>
+          </div>
+        </div>
+      )}
+      <div className="flex-1 flex min-h-0">
       {/* Canvas side — always visible */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Toolbar */}
@@ -1790,6 +1867,29 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
           </Button>
         </div>
 
+        {/* Fixed-class batch annotate — YOLO, RT-DETR, RF-DETR (no text prompt needed) */}
+        {(() => {
+          const selModel = models.find(m => m.id === selectedModel)
+          const isFixedClass = selModel && !['sam3', 'yoloworld', 'groundingdino', 'owlvit'].includes(selModel.type)
+          if (!isFixedClass || !selModel) return null
+          return (
+            <div className="p-3 space-y-2.5 border-b border-border">
+              <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.18em] text-primary/70">
+                Batch Annotate
+              </p>
+              <Button size="sm"
+                className="w-full h-8 text-xs gap-1.5 font-semibold bg-primary text-primary-foreground hover:bg-primary/90"
+                onClick={textAnnotateBatch}
+                disabled={isAutoAnnotating || isStartingBatch}>
+                {isStartingBatch
+                  ? <><Loader2 className="w-3 h-3 animate-spin" /> Starting…</>
+                  : <><ChevronsRight className="w-3.5 h-3.5" /> Batch Annotate Dataset</>
+                }
+              </Button>
+            </div>
+          )
+        })()}
+
         {/* Text prompt section — shown for SAM3, YOLO-World, and GroundingDINO */}
         {(() => {
           const selModel = models.find(m => m.id === selectedModel)
@@ -1888,7 +1988,18 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
             <p className="text-[9px] font-mono font-semibold uppercase tracking-[0.18em] text-muted-foreground/60">
               Annotations
             </p>
-            <span className="text-[10px] font-mono text-primary">{annotations.length}</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-mono text-primary">{annotations.length}</span>
+              {selectedDataset && (
+                <button
+                  onClick={deleteAllAnnotations}
+                  className="text-[9px] text-destructive/60 hover:text-destructive transition-colors"
+                  title="Delete all annotations from dataset"
+                >
+                  clear all
+                </button>
+              )}
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-2">
             {annotations.length === 0 ? (
@@ -2193,6 +2304,7 @@ export function AnnotationView({ selectedDataset, apiUrl, imageCache, updateImag
           <button onClick={() => setError(null)} className="ml-auto text-xs underline">Dismiss</button>
         </div>
       )}
+      </div>
     </div>
   )
 }

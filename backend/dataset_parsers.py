@@ -910,7 +910,7 @@ class DatasetParser:
             if not img_dir.exists():
                 continue
             try:
-                img_files = list(img_dir.iterdir())
+                img_files = sorted(img_dir.iterdir(), key=lambda f: f.name)
             except Exception:
                 continue
             for img_file in img_files:
@@ -945,7 +945,7 @@ class DatasetParser:
                 split_name = parent_name if parent_name in ("train", "val", "valid", "test") else None
                 lbl_dir = img_dir.parent / "labels"
                 try:
-                    img_files = list(img_dir.iterdir())
+                    img_files = sorted(img_dir.iterdir(), key=lambda f: f.name)
                 except Exception:
                     continue
                 for img_file in img_files:

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,11 +8,12 @@ import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
 import { Progress } from '@/components/ui/progress'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { 
-  Video, 
-  Upload, 
-  Film, 
-  Clock, 
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  Video,
+  Upload,
+  Film,
+  Clock,
   Image as ImageIcon,
   Play,
   Pause,
@@ -25,7 +26,6 @@ import {
   Grid3X3,
   Timer,
   ZoomIn,
-  Download,
   RefreshCcw
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -82,87 +82,71 @@ export function VideoExtractionView({
   // Extraction state
   const [isExtracting, setIsExtracting] = useState(false)
   const [extractionProgress, setExtractionProgress] = useState(0)
+  const [extractionFrames, setExtractionFrames] = useState(0)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [existingDatasetId, setExistingDatasetId] = useState<string>('new')
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (!files || files.length === 0) return
 
     setUploading(true)
     setUploadProgress(0)
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i]
+    const uploadNext = (index: number) => {
+      if (index >= files.length) {
+        setUploading(false)
+        setUploadProgress(0)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+        return
+      }
+
+      const file = files[index]
       const formData = new FormData()
       formData.append('video', file)
 
-      try {
-        // Simulate upload progress
-        const progressInterval = setInterval(() => {
-          setUploadProgress(prev => Math.min(prev + 10, 90))
-        }, 200)
-
-        const response = await fetch(`${apiUrl}/api/videos/upload`, {
-          method: 'POST',
-          body: formData
-        })
-
-        clearInterval(progressInterval)
-        setUploadProgress(100)
-
-        if (response.ok) {
-          const data = await response.json()
-          const newVideo: VideoFile = {
-            id: data.id || `vid_${Date.now()}`,
-            name: file.name,
-            duration: data.duration || 60,
-            fps: data.fps || 30,
-            totalFrames: data.total_frames || 1800,
-            width: data.width || 1920,
-            height: data.height || 1080,
-            url: data.url || URL.createObjectURL(file),
-            thumbnail: data.thumbnail || null
-          }
-          setVideos(prev => [...prev, newVideo])
-          if (!selectedVideo) {
-            setSelectedVideo(newVideo)
-            setEndTime(newVideo.duration)
-            setOutputName(`frames_${file.name.replace(/\.[^/.]+$/, '')}`)
-          }
-        }
-      } catch (err) {
-        // Create video from local file as fallback
-        const video = document.createElement('video')
-        video.src = URL.createObjectURL(file)
-        video.onloadedmetadata = () => {
-          const newVideo: VideoFile = {
-            id: `vid_${Date.now()}`,
-            name: file.name,
-            duration: video.duration,
-            fps: 30,
-            totalFrames: Math.floor(video.duration * 30),
-            width: video.videoWidth,
-            height: video.videoHeight,
-            url: video.src,
-            thumbnail: null
-          }
-          setVideos(prev => [...prev, newVideo])
-          if (!selectedVideo) {
-            setSelectedVideo(newVideo)
-            setEndTime(newVideo.duration)
-            setOutputName(`frames_${file.name.replace(/\.[^/.]+$/, '')}`)
-          }
+      const xhr = new XMLHttpRequest()
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) {
+          setUploadProgress(Math.round(ev.loaded / ev.total * 100))
         }
       }
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText)
+            const newVideo: VideoFile = {
+              id: data.id || `vid_${Date.now()}`,
+              name: file.name,
+              duration: data.duration || 60,
+              fps: data.fps || 30,
+              totalFrames: data.total_frames || 1800,
+              width: data.width || 1920,
+              height: data.height || 1080,
+              url: data.url || URL.createObjectURL(file),
+              thumbnail: data.thumbnail || null,
+            }
+            setVideos(prev => [...prev, newVideo])
+            setSelectedVideo(sv => {
+              if (!sv) {
+                setEndTime(newVideo.duration)
+                setOutputName(`frames_${file.name.replace(/\.[^/.]+$/, '')}`)
+                return newVideo
+              }
+              return sv
+            })
+          } catch (_) {}
+        }
+        uploadNext(index + 1)
+      }
+      xhr.onerror = () => uploadNext(index + 1)
+      xhr.open('POST', `${apiUrl}/api/videos/upload`)
+      xhr.send(formData)
     }
 
-    setUploading(false)
-    setUploadProgress(0)
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
+    uploadNext(0)
   }
 
   const formatTime = (seconds: number) => {
@@ -222,17 +206,12 @@ export function VideoExtractionView({
     if (!selectedVideo) return
     setIsExtracting(true)
     setExtractionProgress(0)
+    setExtractionFrames(0)
     setMessage(null)
 
-    // Start progress animation
-    const progressInterval = setInterval(() => {
-      setExtractionProgress(prev => Math.min(prev + 2, 90))
-    }, 500)
-
     try {
-      const config = {
+      const config: Record<string, unknown> = {
         video_id: selectedVideo.id,
-        video_path: selectedVideo.url.startsWith('/') ? undefined : selectedVideo.url,
         mode: extractionMode,
         start_time: startTime,
         end_time: endTime,
@@ -241,43 +220,61 @@ export function VideoExtractionView({
         uniform_count: uniformCount,
         manual_frames: manualFrames,
         max_frames: extractionMode === 'uniform' ? uniformCount : undefined,
-        output_name: outputName || `frames_${selectedVideo.name.replace(/\.[^/.]+$/, '')}`
+        output_name: outputName || `frames_${selectedVideo.name.replace(/\.[^/.]+$/, '')}`,
+      }
+      if (existingDatasetId && existingDatasetId !== 'new') {
+        config.existing_dataset_id = existingDatasetId
       }
 
-      const response = await fetch(`${apiUrl}/api/videos/extract-frames`, {
+      const startResp = await fetch(`${apiUrl}/api/videos/extract-frames`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
+        body: JSON.stringify(config),
       })
 
-      clearInterval(progressInterval)
-
-      if (response.ok) {
-        setExtractionProgress(100)
-        const data = await response.json()
-        if (data.new_dataset) {
-          setDatasets([...datasets, data.new_dataset])
-          onDatasetCreated?.(data.new_dataset)
-        }
-        setMessage({
-          type: 'success',
-          text: `Extracted ${data.extracted_frames || 'frames'} frames to dataset "${data.dataset_name || outputName}"`
-        })
-      } else {
-        const errorData = await response.json().catch(() => ({ detail: 'Extraction failed' }))
-        setExtractionProgress(0)
-        setMessage({ 
-          type: 'error', 
-          text: errorData.detail || 'Frame extraction failed. Make sure OpenCV is installed (pip install opencv-python).'
-        })
+      if (!startResp.ok) {
+        const err = await startResp.json().catch(() => ({ detail: 'Extraction failed' }))
+        setMessage({ type: 'error', text: err.detail || 'Frame extraction failed.' })
+        setIsExtracting(false)
+        return
       }
-    } catch (err) {
-      clearInterval(progressInterval)
-      setExtractionProgress(0)
-      setMessage({ 
-        type: 'error', 
-        text: `Extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}. Make sure the backend is running and OpenCV is installed.`
+
+      const { job_id } = await startResp.json()
+
+      // Poll for real progress
+      await new Promise<void>((resolve) => {
+        const poll = setInterval(async () => {
+          try {
+            const statusResp = await fetch(`${apiUrl}/api/videos/extract/${job_id}/status`)
+            if (!statusResp.ok) return
+            const job = await statusResp.json()
+            setExtractionProgress(job.progress ?? 0)
+            setExtractionFrames(job.extracted_frames ?? 0)
+
+            if (job.status === 'done') {
+              clearInterval(poll)
+              setExtractionProgress(100)
+              if (job.new_dataset && !job.is_existing) {
+                setDatasets([...datasets, job.new_dataset])
+                onDatasetCreated?.(job.new_dataset)
+              } else if (job.new_dataset && job.is_existing) {
+                setDatasets(datasets.map(d => d.id === job.dataset_id ? job.new_dataset : d))
+              }
+              const name = job.new_dataset?.name || outputName
+              setMessage({ type: 'success', text: `Extracted ${job.extracted_frames} frames to dataset "${name}"` })
+              resolve()
+            } else if (job.status === 'error') {
+              clearInterval(poll)
+              setMessage({ type: 'error', text: job.error || 'Extraction failed.' })
+              setExtractionProgress(0)
+              resolve()
+            }
+          } catch (_) {}
+        }, 500)
       })
+    } catch (err) {
+      setMessage({ type: 'error', text: `Extraction failed: ${err instanceof Error ? err.message : 'Unknown error'}` })
+      setExtractionProgress(0)
     }
     setIsExtracting(false)
   }
@@ -345,7 +342,9 @@ export function VideoExtractionView({
             <div className="flex items-center gap-4">
               <Scissors className="w-5 h-5 text-muted-foreground" />
               <Progress value={extractionProgress} className="flex-1" />
-              <span className="text-sm text-muted-foreground w-12">{extractionProgress}%</span>
+              <span className="text-sm text-muted-foreground w-32 text-right">
+                {extractionFrames > 0 ? `${extractionFrames} frames` : `${extractionProgress}%`}
+              </span>
             </div>
           </CardContent>
         </Card>
@@ -626,13 +625,29 @@ export function VideoExtractionView({
 
                   <div className="mt-4 space-y-4">
                     <div className="space-y-2">
+                      <Label>Extract Into</Label>
+                      <Select value={existingDatasetId} onValueChange={setExistingDatasetId}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="New dataset" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="new">New dataset</SelectItem>
+                          {datasets.map(d => (
+                            <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {existingDatasetId === 'new' && (
+                    <div className="space-y-2">
                       <Label>Output Dataset Name</Label>
-                      <Input 
+                      <Input
                         value={outputName}
                         onChange={(e) => setOutputName(e.target.value)}
                         placeholder="Dataset name"
                       />
                     </div>
+                    )}
 
                     <div className="p-4 bg-muted/50 rounded-lg">
                       <div className="flex items-center justify-between text-sm">

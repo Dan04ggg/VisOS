@@ -11,6 +11,8 @@ import { AnnotationView } from '@/components/annotation-view'
 import { ConvertView } from '@/components/convert-view'
 import { MergeView } from '@/components/merge-view'
 import { TrainingView } from '@/components/training-view'
+import { InferenceView } from '@/components/inference-view'
+import { EvaluationView } from '@/components/evaluation-view'
 import { ModelsView } from '@/components/models-view'
 import { SettingsView } from '@/components/settings-view'
 import { ClassManagementView } from '@/components/class-management-view'
@@ -25,7 +27,7 @@ import { DuplicateDetectionView } from '@/components/duplicate-detection-view'
 import { BatchJobsView } from '@/components/batch-jobs-view'
 import { useSettings } from '@/lib/settings-context'
 
-export type ViewType = 'datasets' | 'dashboard' | 'gallery' | 'sorting' | 'annotate' | 'classes' | 'augmentation' | 'video-extraction' | 'split' | 'convert' | 'merge' | 'training' | 'models' | 'batch-jobs' | 'health' | 'compare' | 'snapshots' | 'yaml-wizard' | 'settings' | 'duplicate-detection'
+export type ViewType = 'datasets' | 'dashboard' | 'gallery' | 'sorting' | 'annotate' | 'classes' | 'augmentation' | 'video-extraction' | 'split' | 'convert' | 'merge' | 'training' | 'inference' | 'evaluate' | 'models' | 'batch-jobs' | 'health' | 'compare' | 'snapshots' | 'yaml-wizard' | 'settings' | 'duplicate-detection'
 
 export interface Dataset {
   id: string
@@ -72,8 +74,8 @@ export type ImageCache = Record<string, ImageData[]>
 const VALID_VIEWS = new Set<ViewType>([
   'datasets', 'dashboard', 'gallery', 'sorting', 'annotate', 'classes',
   'augmentation', 'video-extraction', 'split', 'convert', 'merge',
-  'training', 'models', 'batch-jobs', 'health', 'compare', 'snapshots',
-  'yaml-wizard', 'settings', 'duplicate-detection',
+  'training', 'inference', 'evaluate', 'models', 'batch-jobs', 'health',
+  'compare', 'snapshots', 'yaml-wizard', 'settings', 'duplicate-detection',
 ])
 
 // Views that require a dataset to be selected before they're useful.
@@ -321,6 +323,7 @@ export default function Home() {
             selectedDataset={selectedDataset}
             datasets={datasets}
             setDatasets={setDatasets}
+            onDatasetCreated={setSelectedDataset}
             apiUrl={apiUrl}
           />
         )
@@ -345,6 +348,7 @@ export default function Home() {
             selectedDataset={selectedDataset}
             datasets={datasets}
             setDatasets={setDatasets}
+            onDatasetCreated={setSelectedDataset}
             apiUrl={apiUrl}
           />
         )
@@ -370,6 +374,21 @@ export default function Home() {
       case 'training':
         viewNode = (
           <TrainingView
+            datasets={datasets}
+            apiUrl={apiUrl}
+          />
+        )
+        break
+      case 'inference':
+        viewNode = (
+          <InferenceView
+            apiUrl={apiUrl}
+          />
+        )
+        break
+      case 'evaluate':
+        viewNode = (
+          <EvaluationView
             datasets={datasets}
             apiUrl={apiUrl}
           />

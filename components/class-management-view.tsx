@@ -61,6 +61,7 @@ export function ClassManagementView({
   const [extractOutputFormat, setExtractOutputFormat] = useState('')
   const [renameNewName, setRenameNewName] = useState('')
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [unannotatedCount, setUnannotatedCount] = useState<{ total: number; unannotated: number; annotated: number } | null>(null)
 
   useEffect(() => {
     if (selectedDataset) {
@@ -69,6 +70,15 @@ export function ClassManagementView({
       setExtractOutputFormat(selectedDataset.format || '')
     }
   }, [selectedDataset])
+
+  useEffect(() => {
+    if (activeTab === 'remove-unannotated' && selectedDataset) {
+      fetch(`${apiUrl}/api/datasets/${selectedDataset.id}/unannotated-count`)
+        .then(r => r.json())
+        .then(data => setUnannotatedCount(data))
+        .catch(() => setUnannotatedCount(null))
+    }
+  }, [activeTab, selectedDataset?.id])
 
   const loadClasses = async () => {
     if (!selectedDataset) return
@@ -334,7 +344,9 @@ export function ClassManagementView({
             d.id === selectedDataset.id ? data.updated_dataset : d
           ))
         }
-        setMessage({ type: 'success', text: `Removed ${data.removed} unannotated image(s)` })
+        const remaining = data.remaining ?? data.updated_dataset?.num_images ?? '?'
+        setMessage({ type: 'success', text: `Removed ${data.removed} unannotated image(s). ${remaining} image(s) remain.` })
+        setUnannotatedCount(null)
         loadClasses()
       } else {
         const body = await response.json().catch(() => ({}))
@@ -736,6 +748,22 @@ export function ClassManagementView({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {unannotatedCount && (
+                  <div className="grid grid-cols-3 gap-3 text-center">
+                    <div className="p-3 bg-muted rounded-lg">
+                      <p className="text-2xl font-bold">{unannotatedCount.total}</p>
+                      <p className="text-xs text-muted-foreground">Total images</p>
+                    </div>
+                    <div className="p-3 bg-destructive/10 rounded-lg">
+                      <p className="text-2xl font-bold text-destructive">{unannotatedCount.unannotated}</p>
+                      <p className="text-xs text-muted-foreground">Will be removed</p>
+                    </div>
+                    <div className="p-3 bg-emerald-500/10 rounded-lg">
+                      <p className="text-2xl font-bold text-emerald-500">{unannotatedCount.annotated}</p>
+                      <p className="text-xs text-muted-foreground">Will remain</p>
+                    </div>
+                  </div>
+                )}
                 <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-lg">
                   <div className="flex items-start gap-3">
                     <AlertTriangle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
@@ -755,10 +783,10 @@ export function ClassManagementView({
                 <Button
                   variant="destructive"
                   onClick={handleRemoveUnannotated}
-                  disabled={loading}
+                  disabled={loading || (unannotatedCount?.unannotated === 0)}
                   className="w-full"
                 >
-                  {loading ? 'Removing...' : 'Remove Unannotated Images'}
+                  {loading ? 'Removing...' : unannotatedCount?.unannotated === 0 ? 'No unannotated images' : `Remove ${unannotatedCount?.unannotated ?? ''} Unannotated Image(s)`}
                   <ImageMinus className="w-4 h-4 ml-2" />
                 </Button>
               </CardContent>

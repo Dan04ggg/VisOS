@@ -24,7 +24,10 @@ import {
   Loader2,
   Video,
   ImagePlus,
-  Plus
+  Plus,
+  Pencil,
+  X,
+  Check
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { Dataset } from '@/app/page'
@@ -62,6 +65,8 @@ export function DatasetsView({
   const [dragActive, setDragActive] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState('')
   
   const imageInputRef = useRef<HTMLInputElement>(null)
 
@@ -309,6 +314,45 @@ export function DatasetsView({
     }
   }
 
+  const startRenaming = (dataset: Dataset, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setRenamingDatasetId(dataset.id)
+    setRenameValue(dataset.name)
+  }
+
+  const cancelRenaming = (e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    setRenamingDatasetId(null)
+    setRenameValue('')
+  }
+
+  const commitRename = async (datasetId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation()
+    const trimmed = renameValue.trim()
+    if (!trimmed) { cancelRenaming(); return }
+    try {
+      const response = await fetch(`${apiUrl}/api/datasets/${datasetId}/rename`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: trimmed }),
+      })
+      if (!response.ok) {
+        const err = await response.json()
+        throw new Error(err.detail || 'Rename failed')
+      }
+      const result = await response.json()
+      setDatasets(datasets.map(d => d.id === datasetId ? { ...d, name: trimmed } : d))
+      if (selectedDataset?.id === datasetId) {
+        onSelectDataset({ ...selectedDataset, name: trimmed })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rename failed')
+    } finally {
+      setRenamingDatasetId(null)
+      setRenameValue('')
+    }
+  }
+
   const getTaskTypeColor = (taskType: string) => {
     switch (taskType) {
       case 'classification': return 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
@@ -505,7 +549,34 @@ export function DatasetsView({
                 <CardHeader className="pb-2">
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
-                      <CardTitle className="text-sm font-semibold break-words">{dataset.name}</CardTitle>
+                      {renamingDatasetId === dataset.id ? (
+                        <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                          <Input
+                            autoFocus
+                            value={renameValue}
+                            onChange={e => setRenameValue(e.target.value)}
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') commitRename(dataset.id)
+                              if (e.key === 'Escape') cancelRenaming()
+                            }}
+                            className="h-7 text-sm font-semibold px-2 py-0"
+                          />
+                          <button
+                            onClick={e => commitRename(dataset.id, e)}
+                            className="p-1 rounded hover:bg-green-500/10 text-green-600"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={cancelRenaming}
+                            className="p-1 rounded hover:bg-muted text-muted-foreground"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <CardTitle className="text-sm font-semibold break-words">{dataset.name}</CardTitle>
+                      )}
                       <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                         <span className="inline-flex items-center px-2 py-0.5 bg-secondary rounded-md text-[10px] font-mono font-medium">
                           {getFormatLabel(dataset.format)}
@@ -515,7 +586,7 @@ export function DatasetsView({
                         </span>
                       </div>
                     </div>
-                    {selectedDataset?.id === dataset.id && (
+                    {selectedDataset?.id === dataset.id && renamingDatasetId !== dataset.id && (
                       <CheckCircle className="w-4 h-4 text-primary shrink-0 mt-0.5" strokeWidth={2} />
                     )}
                   </div>
@@ -554,6 +625,14 @@ export function DatasetsView({
                     >
                       <Download className="w-3 h-3 mr-1" strokeWidth={1.75} />
                       Export
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7"
+                      onClick={(e) => startRenaming(dataset, e)}
+                    >
+                      <Pencil className="w-3 h-3" strokeWidth={1.75} />
                     </Button>
                     <Button
                       size="sm"
