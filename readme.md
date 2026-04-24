@@ -4,6 +4,13 @@
 
 The all-in-one local workbench for computer vision datasets. Annotate, convert, augment, merge, train, and run inference — without touching a cloud service or writing a line of code.
 
+<a href="https://buymeacoffee.com/dan04ggg" target="_blank">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="40">
+</a>
+
+> If VisOS has saved you time, a coffee is always appreciated — but no pressure. It helps me keep building. ☕
+
+
 ---
 
 ## What's New
